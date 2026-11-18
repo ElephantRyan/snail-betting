@@ -138,7 +138,7 @@ export type ServerMsg = StateMsg | RaceMsg | JoinedMsg | HelloMsg | SimilarMsg |
 export type ClientMsg =
   | { type: 'create'; name: string; settings: Settings }
   | { type: 'join'; code: string; name: string; token?: string }
-  | { type: 'start' | 'pass' | 'close' | 'next' | 'rematch' | 'begin' }
+  | { type: 'start' | 'close' | 'next' | 'rematch' | 'begin' }
   | { type: 'addSnail'; name: string; force?: boolean }
   | { type: 'removeSnail'; id: number }
   | { type: 'bet'; snail: number; amount: number };

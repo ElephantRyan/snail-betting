@@ -134,8 +134,6 @@ func handleAction(c *client, m inMsg) {
 		err = r.start(p)
 	case "bet":
 		err = r.placeBet(p, m.Snail, m.Amount)
-	case "pass":
-		err = r.pass(p)
 	case "close":
 		err = r.forceClose(p)
 	case "next":

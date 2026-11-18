@@ -649,13 +649,3 @@ func (r *Room) placeBet(p *Player, snail, amount int) string {
 	r.maybeCloseBetting()
 	return ""
 }
-
-func (r *Room) pass(p *Player) string {
-	if r.phase != "betting" {
-		return "Betting is closed."
-	}
-	p.bet, p.ready = nil, true
-	r.broadcast()
-	r.maybeCloseBetting()
-	return ""
-}

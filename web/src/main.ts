@@ -517,8 +517,6 @@ function renderBetting(v: StateMsg): void {
   $('close-btn').hidden = !isHost(v);
   if (v.myBet) {
     $('bet-status').textContent = `Locked in: ${v.myBet.amount} on ${laneLabel(v.myBet.snail)}. You can change it until betting closes.`;
-  } else if (self.ready) {
-    $('bet-status').textContent = 'Sitting out this round.';
   } else {
     $('bet-status').textContent = `You have ${self.coins} coins. Pick a snail and an amount.`;
   }
@@ -527,11 +525,6 @@ function renderBetting(v: StateMsg): void {
 
 $('bet-btn').addEventListener('click', () => {
   if (draftPick !== null) send({ type: 'bet', snail: draftPick, amount: currentAmount() });
-});
-$('pass-btn').addEventListener('click', () => {
-  draftPick = null;
-  amountInput.value = '';
-  send({ type: 'pass' });
 });
 $('close-btn').addEventListener('click', () => send({ type: 'close' }));
 $('start-btn').addEventListener('click', () => send({ type: 'start' }));

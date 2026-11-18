@@ -6,7 +6,7 @@ Multiplayer snail-race betting game for team events. Go server (WebSockets, in-m
 - The host creates a room (rounds, starting coins, bet timer) and shares the 6-letter code or invite link.
 - Display names are unique per room; duplicates get a suffix (`Sam`, `Sam 2`).
 - Nobody can join after the first round of betting starts. A dropped player can rejoin by refreshing (same tab) or by entering their exact name.
-- Each round, bet on one snail or sit out. Odds are equal; payouts are parimutuel with a podium: all bets form a pool split 60/25/15 across the 1st/2nd/3rd place snails (positions when the winner crosses the line), each slice shared among that snail's backers in proportion to their stake. Places nobody backed are redistributed to the backed ones. If nobody backed the top 3, everyone is refunded.
+- Each round, bet on one snail. Odds are equal; payouts are parimutuel with a podium: all bets form a pool split 60/25/15 across the 1st/2nd/3rd place snails (positions when the winner crosses the line), each slice shared among that snail's backers in proportion to their stake. Places nobody backed are redistributed to the backed ones. If nobody backed the top 3, everyone is refunded.
 - Players at 0 coins get a 50-coin loan at the start of the next round.
 
 ## Decision mode
