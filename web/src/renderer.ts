@@ -137,6 +137,7 @@ export class TrackRenderer {
   private restOrder: number[] | null = null; // reconnected after the race: podium without the animation
   private doneAt = 0; // when the podium started to appear
   private lanes = SNAIL_COUNT;
+  private advance: number | null = null; // decision-mode heat: how many snails move on (null = tiered podium)
   private labels: string[] | null = null; // null = lanes are just numbered (classic)
   private laneH = LANE_H;
   private H = TOP * 2 + LANE_H * SNAIL_COUNT;
@@ -161,6 +162,11 @@ export class TrackRenderer {
     }
     this.g = this.canvas.getContext('2d')!;
     this.g.imageSmoothingEnabled = false;
+  }
+
+  /** A heat that isn't the final shows one flat platform of the snails moving on, not the 1-2-3 podium. */
+  setAdvance(n: number | null): void {
+    this.advance = n;
   }
 
   setSelected(lane: number | null): void {
@@ -348,6 +354,10 @@ export class TrackRenderer {
 
   /** 2nd - 1st - 3rd blocks centred; everyone else lines up on the floor beside them. */
   private drawPodium(g: Ctx, now: number, order: number[], sinceDone: number): void {
+    if (this.advance !== null) {
+      this.drawAdvancing(g, now, order, sinceDone, this.advance);
+      return;
+    }
     const H = PODIUM_H;
     const floor = H - 28;
     g.fillStyle = '#1d2a22';
@@ -394,6 +404,53 @@ export class TrackRenderer {
       const x = k < 3 ? x1 + bw * 2 + 6 + k * 25 : 4 + (k - 3) * 25;
       g.drawImage(this.sprites[lane]![0]!, x, floor - SPRITE_H + 2);
       drawGlyphs(g, String(k + 4), x + 7, floor + 8, 2, '#8fa596');
+    });
+  }
+
+  /** One level, no placings: everyone moving on stands on the same platform; the rest wait on the floor. */
+  private drawAdvancing(g: Ctx, now: number, order: number[], sinceDone: number, advance: number): void {
+    const H = PODIUM_H;
+    const floor = H - 28;
+    g.fillStyle = '#1d2a22';
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = '#2f6b3a';
+    g.fillRect(0, floor, W, H - floor);
+    g.fillStyle = '#3a8548';
+    g.fillRect(0, floor, W, 3);
+
+    const slot = 90;
+    const bh = 70;
+    const col = '#8b7bd8';
+    const left = Math.round((W - slot * advance) / 2);
+    const top = floor - bh;
+    g.fillStyle = col;
+    g.fillRect(left, top, slot * advance, bh);
+    g.fillStyle = shade(col, 0.35);
+    g.fillRect(left, top, slot * advance, 3);
+    g.fillStyle = shade(col, -0.35);
+    g.fillRect(left + slot * advance - 4, top, 4, bh);
+    this.drawName(g, 'MOVING ON', W / 2, top + 12, 12, 'center', '#fff', shade(col, -0.55));
+
+    order.slice(0, advance).forEach((lane, k) => {
+      const x = left + k * slot;
+      if (k > 0) {
+        g.fillStyle = shade(col, -0.2);
+        g.fillRect(x, top + 3, 1, bh - 3);
+      }
+      if (this.labels) this.drawName(g, this.labels[lane]!, x + slot / 2, top + 40, 14, 'center', '#fff', shade(col, -0.55));
+      // arrivals drop in from the back of the line to the front
+      const delay = (advance - 1 - k) * PODIUM_DROP_MS;
+      const t = Math.min(1, Math.max(0, (sinceDone - delay) / PODIUM_FALL_MS));
+      if (t <= 0) return;
+      const rest = top - SPR_H;
+      const y = rest - (1 - t) * (1 - t) * 160;
+      const frame = (Math.floor(now / 400 + lane) % 2) as 0 | 1;
+      g.drawImage(this.sprites[lane]![frame]!, x + (slot - SPR_W) / 2, y, SPR_W, SPR_H);
+    });
+
+    // knocked out: small, on the floor
+    order.slice(advance).forEach((lane, k) => {
+      g.drawImage(this.sprites[lane]![0]!, 8 + k * 27, floor - SPRITE_H + 2);
     });
   }
 

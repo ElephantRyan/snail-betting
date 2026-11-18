@@ -40,6 +40,7 @@ small, .note { color: var(--muted); font-size: 13px; }
 .bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .code { font: inherit; font-size: 22px; font-weight: 700; letter-spacing: 6px; color: #1a1a1a; background: var(--accent); border: 3px solid var(--line); box-shadow: 3px 3px 0 var(--line); padding: 4px 12px; cursor: pointer; }
 #round-label { color: var(--muted); text-transform: uppercase; }
+.leave { font: inherit; font-size: 13px; color: var(--ink); background: var(--panel-2); border: 3px solid var(--line); padding: 4px 10px; cursor: pointer; }
 #timer { margin-left: auto; font-weight: 700; color: var(--accent); }
 
 .layout { display: grid; gap: 16px; }
@@ -99,3 +100,4 @@ select:focus { outline: 2px solid var(--accent); outline-offset: 0; }
 .lineup { white-space: nowrap; }
 tr.out td { color: var(--muted); }
 tr.adv td:first-child { color: var(--accent); font-weight: 700; }
+#dheat-table tr.adv td:first-child { color: inherit; font-weight: inherit; }

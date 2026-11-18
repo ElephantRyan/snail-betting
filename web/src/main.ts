@@ -252,6 +252,8 @@ function render(): void {
 
   $('code-btn').textContent = v.code;
   $('round-label').textContent = roundLabel(v, d);
+  const heatFinal = !!d && d.heats === 1;
+  renderer.setAdvance(d && d.lanes && !heatFinal ? Math.min(4, d.lanes.length - 1) : null);
   renderer.setSelected(v.phase === 'betting' ? draftPick : null);
   renderBoard(v);
 
@@ -407,14 +409,13 @@ function renderHeatResults(v: StateMsg, d: DecisionView): void {
   const r = d.result;
   if (!r) return;
   const lanes = d.lanes ?? [];
-  $('dheat-title').textContent = `${optionName(d, r.order[0]!)} wins the heat`;
+  $('dheat-title').textContent = `${r.advance} snails move on`;
   $('dheat-note').textContent = `Round ${d.round} of ${d.rounds}, heat ${d.heat} of ${d.heats}. The top ${r.advance} of ${r.order.length} move on.`;
-  const head = el('tr', {}, el('th', { text: 'Place' }), el('th', { text: 'Snail' }), el('th', { text: '' }));
+  const head = el('tr', {}, el('th', { text: 'Snail' }), el('th', { text: '' }));
   const rows = r.order.map((id, i) =>
     el(
       'tr',
       { class: i < r.advance ? 'adv' : 'out' },
-      el('td', { text: ordinal(i + 1) }),
       el('td', {}, dot(lanes.indexOf(id)), optionName(d, id)),
       el('td', { class: 'num', text: i < r.advance ? 'Advances' : 'Out' }),
     ),
@@ -592,6 +593,15 @@ function updateTimer(): void {
   }
 }
 setInterval(updateTimer, 250);
+
+// Forget this room and return to the home screen (closing the socket drops us from the room).
+$('leave-btn').addEventListener('click', () => {
+  const host = view && isHost(view);
+  const msg = host ? 'Leave this game? Another player will take over as host.' : 'Leave this game?';
+  if (!confirm(msg)) return;
+  saveSession(null);
+  location.href = location.pathname; // fresh page, no ?code= either
+});
 
 $('code-btn').addEventListener('click', async () => {
   if (!view) return;
