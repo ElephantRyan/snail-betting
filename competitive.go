@@ -111,7 +111,7 @@ type tuning struct {
 // Values found by TestTune (balance_test.go) so that the usual builds come out about even.
 var tune = tuning{
 	SpeedPer: 0.022, DetermPer: 0.033, BoostPer: 0.055,
-	ShellBlock: 0.09, ShellShort: 0.13,
+	ShellBlock: 0.07, ShellShort: 0.11,
 	SaltSlow: 0.36, SaltFrames: 115, FoodFrames: 37,
 }
 
@@ -343,12 +343,13 @@ type CompBet struct {
 }
 
 type Comp struct {
-	stage  string // "seed" | "elim"
-	round  int    // seeding round, 1-based
-	heats  [][]int
-	heat   int
-	result []CompRow
-	bets   []CompBet
+	finalShop bool   // the shop after the last seeding round, before elimination
+	stage     string // "seed" | "elim"
+	round     int    // seeding round, 1-based
+	heats     [][]int
+	heat      int
+	result    []CompRow
+	bets      []CompBet
 }
 
 func (r *Room) playerByOpt(id int) *Player {
@@ -404,6 +405,10 @@ func (r *Room) startShop() {
 
 func (r *Room) compCloseShop() {
 	if r.phase != "shop" {
+		return
+	}
+	if r.comp.finalShop {
+		r.beginElimination()
 		return
 	}
 	r.comp.heat = 0
@@ -463,7 +468,7 @@ func (r *Room) settleHeat(lanes, order []int, seeding bool) {
 			q.points += row.Points
 			row.Base = participation(r.settings, richest-q.coins)
 			q.coins += row.Base
-			if place == len(order)-1 && len(order) > 1 && c.round < r.settings.Rounds {
+			if place == len(order)-1 && len(order) > 1 {
 				q.free, row.Consolation = 1, true
 			}
 		}
@@ -496,8 +501,10 @@ func (r *Room) compNext() string {
 		r.readyHeat()
 	case c.round < r.settings.Rounds:
 		r.startShop()
-	default:
-		r.beginElimination()
+	default: // seeding is over: lock the seeds, then one last shop before upgrades close for good
+		r.assignSeeds()
+		c.finalShop = true
+		r.startShop()
 	}
 	return ""
 }
@@ -515,11 +522,19 @@ func (r *Room) seedOrder() []*Player {
 	return order
 }
 
+// assignSeeds ranks the players once seeding is over, before the last shop, so what they buy
+// there can't change the order.
+func (r *Room) assignSeeds() {
+	for i, q := range r.seedOrder() {
+		q.seed = i + 1
+	}
+}
+
 func (r *Room) beginElimination() {
-	order := r.seedOrder()
+	order := append([]*Player(nil), r.players...)
+	sort.Slice(order, func(a, b int) bool { return order[a].seed < order[b].seed })
 	seeds := make([]int, len(order))
 	for i, q := range order {
-		q.seed = i + 1
 		seeds[i] = q.optID
 	}
 	r.comp.stage = "elim"
@@ -661,16 +676,17 @@ func (r *Room) readyHeat() {
 // ---- wire view ----------------------------------------------------------------------
 
 type compView struct {
-	Stage  string    `json:"stage"`
-	Round  int       `json:"round"`
-	Rounds int       `json:"rounds"`
-	Heat   int       `json:"heat"`
-	Heats  int       `json:"heats"`
-	Unit   int       `json:"unit"`
-	Allow  int       `json:"allow"` // upgrades each player may buy this seeding round
-	Lanes  []string  `json:"lanes"` // player ids in lane order for the current heat
-	Result []CompRow `json:"result"`
-	Bets   []CompBet `json:"bets"`
+	Stage     string    `json:"stage"`
+	Round     int       `json:"round"`
+	Rounds    int       `json:"rounds"`
+	Heat      int       `json:"heat"`
+	Heats     int       `json:"heats"`
+	Unit      int       `json:"unit"`
+	FinalShop bool      `json:"finalShop"` // the last shop, between seeding and elimination
+	Allow     int       `json:"allow"`     // upgrades each player may buy this seeding round
+	Lanes     []string  `json:"lanes"`     // player ids in lane order for the current heat
+	Result    []CompRow `json:"result"`
+	Bets      []CompBet `json:"bets"`
 }
 
 func (r *Room) compView() *compView {
@@ -678,7 +694,7 @@ func (r *Room) compView() *compView {
 	if c == nil {
 		return nil
 	}
-	v := &compView{Stage: c.stage, Round: c.round, Rounds: r.settings.Rounds, Unit: upgradeUnit(r.settings), Allow: shopAllowance(c.round), Result: c.result, Bets: c.bets}
+	v := &compView{Stage: c.stage, Round: c.round, Rounds: r.settings.Rounds, Unit: upgradeUnit(r.settings), FinalShop: c.finalShop, Allow: shopAllowance(c.round), Result: c.result, Bets: c.bets}
 	heats, heat := c.heats, c.heat
 	if c.stage == "elim" {
 		heats, heat = r.bracket.heats, r.bracket.heat

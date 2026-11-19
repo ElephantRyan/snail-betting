@@ -79,6 +79,7 @@ export interface CompView {
   heat: number;
   heats: number;
   unit: number; // price of the first level of an upgrade
+  finalShop?: boolean; // the last shop, between seeding and elimination
   allow: number; // upgrades each player may buy this seeding round
   lanes: string[] | null; // player ids in lane order for the current heat
   result: CompRow[] | null; // the heat that just finished

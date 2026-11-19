@@ -42,6 +42,11 @@ const GLYPHS: Record<string, string[]> = {
   G: ['111', '100', '101', '101', '111'],
   O: ['111', '101', '101', '101', '111'],
   '!': ['010', '010', '010', '000', '010'],
+  Y: ['101', '101', '010', '010', '010'],
+  U: ['101', '101', '101', '101', '111'],
+  B: ['110', '101', '110', '101', '110'],
+  E: ['111', '100', '110', '100', '111'],
+  T: ['111', '010', '010', '010', '010'],
 };
 
 type Ctx = CanvasRenderingContext2D;
@@ -158,6 +163,8 @@ export class TrackRenderer {
   private sprites: HTMLCanvasElement[][] = [];
   private race: RaceAnim | null = null;
   private selected: number | null = null;
+  private youLane: number | null = null; // the lane that is your snail (competitive)
+  private betLane: number | null = null; // the lane you have a bet on
   private finishedFired = false;
   private restOrder: number[] | null = null; // reconnected after the race: podium without the animation
   private doneAt = 0; // when the podium started to appear
@@ -196,6 +203,12 @@ export class TrackRenderer {
 
   setSelected(lane: number | null): void {
     this.selected = lane;
+  }
+
+  /** Lanes to keep flagged for the whole heat: your own snail, and the one you bet on. */
+  setMarks(you: number | null, bet: number | null): void {
+    this.youLane = you;
+    this.betLane = bet;
   }
 
   /** Put every snail back on the start line. */
@@ -304,6 +317,14 @@ export class TrackRenderer {
         g.fillStyle = 'rgba(255,255,255,0.12)';
         g.fillRect(TRACK_START - 4, y, W - TRACK_START + 4, laneH);
       }
+      const mark = this.youLane === i ? '#ffd54a' : this.betLane === i ? '#ffffff' : null;
+      if (mark) {
+        g.fillStyle = mark === '#ffd54a' ? 'rgba(255,213,74,0.16)' : 'rgba(255,255,255,0.10)';
+        g.fillRect(TRACK_START - 4, y, W - TRACK_START + 4, laneH);
+        g.fillStyle = mark;
+        g.fillRect(TRACK_START - 4, y, W - TRACK_START + 4, 1);
+        g.fillRect(TRACK_START - 4, y + laneH - 1, W - TRACK_START + 4, 1);
+      }
     }
     // start line
     g.fillStyle = '#f5f5f5';
@@ -346,6 +367,8 @@ export class TrackRenderer {
       g.fillStyle = shade(color, -0.45);
       g.fillRect(3, y + 10, 14, 2);
       drawGlyphs(g, String(i + 1), 8, y + 3, 1, '#fff');
+      if (this.youLane === i) drawGlyphs(g, 'YOU', 3, y + 15, 1, '#ffd54a');
+      else if (this.betLane === i) drawGlyphs(g, 'BET', 3, y + 15, 1, '#ffffff');
       if (this.selected === i) {
         g.fillStyle = '#fff';
         g.fillRect(0, y + 4, 1, 4);

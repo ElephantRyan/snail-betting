@@ -289,6 +289,8 @@ function render(): void {
   const heatFinal = !!d && d.heats === 1;
   renderer.setAdvance(d && d.lanes && !heatFinal ? Math.min(4, d.lanes.length - 1) : null);
   renderer.setSelected(v.phase === 'betting' ? draftPick : null);
+  const youLane = c ? (c.lanes ?? []).indexOf(v.me) : -1;
+  renderer.setMarks(youLane >= 0 ? youLane : null, v.myBet ? v.myBet.snail : null);
   renderBoard(v);
 
   // keep showing the race until its animation has played out, even if the server already moved on
@@ -301,6 +303,7 @@ function render(): void {
   else if (phase === 'betting') renderBetting(v);
   else if (phase === 'shop') renderShop(v, c!);
   else if (phase === 'racing') {
+    renderYou(v);
     $('racing-pool-line').hidden = !!d || !!c;
     if (compSeed) renderCompRacing(v, c!);
     else if (d) renderDecisionRacing(v, d);
@@ -315,6 +318,7 @@ function render(): void {
 
 function roundLabel(v: StateMsg, d: DecisionView | undefined, c: CompView | undefined): string {
   if (c?.stage === 'seed') {
+    if (c.finalShop) return 'Final shop';
     const seeding = `Seeding ${c.round} / ${c.rounds}`;
     return v.phase === 'shop' ? `${seeding} \u00b7 Shop` : `${seeding} \u00b7 Heat ${c.heat} / ${c.heats}`;
   }
@@ -556,9 +560,10 @@ function renderShop(v: StateMsg, c: CompView): void {
   const spare = self.coins;
   const left = self.left ?? 0;
   const free = self.free ?? 0;
-  $('shop-title').textContent = `Seeding round ${c.round} of ${c.rounds}: shop`;
+  $('shop-title').textContent = c.finalShop ? 'Final shop: last chance to upgrade' : `Seeding round ${c.round} of ${c.rounds}: shop`;
   $('shop-note').textContent =
     (self.bailout ? 'You were broke, so the house lent you 50 coins. ' : '') +
+    (c.finalShop ? 'Seeds are locked in. Upgrades close for good once elimination starts. ' : '') +
     'Upgrades last the whole game and make your snail faster; nobody steers during the race. Everyone is paid for racing (a bit extra if you are behind on coins), and the top 60% of each heat share the prize pool. Last place gets a free upgrade next round. Players sitting out a heat can bet on it, and most coins at the end is a second way to win.';
   $('shop-coins').textContent = `${self.coins} coins · ${left} upgrade${left === 1 ? '' : 's'} left this round (one level per item)` + (free ? ' \u00b7 plus 1 FREE pick' : '');
   $('shop-items').replaceChildren(
@@ -582,6 +587,16 @@ function renderShop(v: StateMsg, c: CompView): void {
     ? `You're ready. Waiting on ${waiting} player${waiting === 1 ? '' : 's'}.`
     : 'Press Ready when you are done shopping.';
   updateTimer();
+}
+
+// Which snail is yours and what you have riding on the heat, in words (the track flags the lanes).
+function renderYou(v: StateMsg): void {
+  const parts: string[] = [];
+  const mine = isComp(v) ? (v.comp?.lanes ?? []).indexOf(v.me) : -1;
+  if (mine >= 0) parts.push(`You are #${mine + 1}`);
+  if (v.myBet) parts.push(`Your bet: ${v.myBet.amount} on ${laneText(v, v.myBet.snail)}`);
+  $('racing-you').textContent = parts.join(' \u00b7 ');
+  $('racing-you').hidden = parts.length === 0;
 }
 
 function renderCompRacing(v: StateMsg, c: CompView): void {
@@ -637,7 +652,7 @@ function renderCompResults(v: StateMsg, c: CompView): void {
   const host = isHost(v);
   const next = $<HTMLButtonElement>('cnext-btn');
   next.hidden = !host;
-  next.textContent = c.heat < c.heats ? 'Next heat' : c.round < c.rounds ? 'Next round' : 'Start elimination';
+  next.textContent = c.heat < c.heats ? 'Next heat' : c.round < c.rounds ? 'Next round' : 'Final shop';
   $('cres-wait').textContent = host ? '' : 'Waiting for the host to continue\u2026';
 }
 $('cnext-btn').addEventListener('click', () => send({ type: 'next' }));
@@ -738,7 +753,7 @@ function renderBetting(v: StateMsg): void {
 
   $('close-btn').hidden = !isHost(v);
   if (racing) {
-    $('bet-status').textContent = 'Your snail races this heat, so you can\'t bet on it. Everyone sitting out is placing bets now; you win prize money if you finish near the front.';
+    $('bet-status').textContent = `You are #${(v.comp?.lanes ?? []).indexOf(v.me) + 1}. ` + 'Your snail races this heat, so you can\'t bet on it. Everyone sitting out is placing bets now; you win prize money if you finish near the front.';
   } else if (comp && self.ready && !v.myBet) {
     $('bet-status').textContent = 'You\'re sitting this one out. Waiting on the other bettors.';
   } else if (v.myBet) {

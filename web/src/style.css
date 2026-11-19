@@ -109,3 +109,4 @@ tr.adv td:first-child { color: var(--accent); font-weight: 700; }
 .shop-row .pips { letter-spacing: 2px; color: var(--accent); }
 .shop-row .chip { grid-column: 2; grid-row: 1 / span 2; min-width: 84px; }
 .shop-row .chip:disabled { opacity: 0.45; cursor: default; }
+.you { color: #ffd54a; font-weight: 700; }

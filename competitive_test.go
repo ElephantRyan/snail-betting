@@ -304,3 +304,52 @@ func TestConsolationAndStipend(t *testing.T) {
 		t.Errorf("a paid upgrade after it should still cost coins: %d", last.coins)
 	}
 }
+
+func TestFinalShop(t *testing.T) {
+	r := newRoom(Settings{Mode: modeCompetitive, Rounds: 1}, "TEST")
+	var ps []*Player
+	for i := 0; i < 3; i++ {
+		p := r.addPlayer(fmt.Sprintf("P%d", i))
+		p.connected = true
+		ps = append(ps, p)
+	}
+	r.start(ps[0])
+	for _, p := range ps {
+		r.ready(p)
+	}
+	r.compFinishHeat()
+	if !r.comp.result[2].Consolation {
+		t.Error("last place in the final seeding round should still get a free upgrade")
+	}
+	winnerID := r.comp.result[0].ID
+	r.compNext() // the last heat is over: one more shop, not the bracket
+	if r.phase != "shop" || !r.comp.finalShop || r.comp.stage != "seed" || r.bracket != nil {
+		t.Fatalf("expected the final shop, got phase %s stage %s", r.phase, r.comp.stage)
+	}
+	seeds := map[string]int{}
+	for _, p := range ps {
+		if p.seed == 0 {
+			t.Errorf("%s has no seed before the final shop", p.name)
+		}
+		seeds[p.id] = p.seed
+	}
+	best := r.find(winnerID)
+	coins := best.coins
+	if r.buy(best, "speed") != "" || best.coins >= coins {
+		t.Errorf("the final shop should sell upgrades: coins %d -> %d", coins, best.coins)
+	}
+	for _, p := range ps {
+		r.ready(p)
+	}
+	if r.comp.stage != "elim" || r.bracket == nil {
+		t.Fatalf("elimination should start once the final shop closes (stage %s)", r.comp.stage)
+	}
+	for _, p := range ps {
+		if p.seed != seeds[p.id] {
+			t.Errorf("%s's seed changed from %d to %d after shopping", p.name, seeds[p.id], p.seed)
+		}
+	}
+	if r.buy(best, "shell") == "" {
+		t.Error("upgrades should be locked once elimination starts")
+	}
+}
