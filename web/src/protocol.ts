@@ -38,6 +38,8 @@ export interface PlayerView {
   points?: number;
   upg?: Upgrades;
   bought?: UpgradeKey[]; // upgrades bought this seeding round
+  left?: number; // paid upgrades still allowed this round
+  free?: number; // a free consolation upgrade is waiting
 }
 
 export interface Upgrades {
@@ -57,7 +59,9 @@ export interface CompRow {
   lane: number;
   place: number;
   points: number; // seeding heats only
+  base: number; // participation pay (seeding heats)
   prize: number;
+  consolation: boolean; // last in a seeding heat: free upgrade next round
 }
 
 export interface CompBet {

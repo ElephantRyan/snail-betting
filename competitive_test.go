@@ -70,7 +70,7 @@ func TestAttacksFire(t *testing.T) {
 }
 
 func TestPrizes(t *testing.T) {
-	for n, want := range map[int]int{2: 1, 4: 1, 5: 2, 6: 2, 7: 2, 8: 3} {
+	for n, want := range map[int]int{2: 1, 3: 1, 4: 2, 5: 3, 6: 3, 7: 4, 8: 4} {
 		if got := prizePlaces(n); got != want {
 			t.Errorf("prizePlaces(%d) = %d, want %d", n, got, want)
 		}
@@ -84,7 +84,7 @@ func TestPrizes(t *testing.T) {
 	for _, p := range split {
 		sum += p
 	}
-	if len(split) != 3 || sum != 8*2*upgradeUnit(s) || split[0] <= split[1] || split[1] <= split[2] {
+	if len(split) != 4 || sum != 8*2*upgradeUnit(s) || split[0] <= split[1] || split[1] <= split[2] {
 		t.Errorf("bad prize split %v", split)
 	}
 }
@@ -215,5 +215,77 @@ func TestCompetitiveGame(t *testing.T) {
 		if _, err := json.Marshal(r.view(p)); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestPickTarget(t *testing.T) {
+	pos := []float64{0.5, 0.2, 0.9, 0.4}
+	for _, c := range []struct {
+		kind       string
+		from, want int
+	}{
+		{"food", 1, 2}, // food: the leader
+		{"salt", 1, 3}, // salt: the snail just ahead of the shooter
+		{"food", 2, 0}, // the leader fires at the runner-up
+		{"salt", 2, 0}, // and so does salt, since nobody is ahead
+		{"salt", 3, 0},
+	} {
+		if got := pickTarget(c.kind, c.from, pos); got != c.want {
+			t.Errorf("%s from %d: got %d, want %d", c.kind, c.from, got, c.want)
+		}
+	}
+	pos[2] = 1.05 // finished snails can't be hit
+	if got := pickTarget("food", 1, pos); got != 0 {
+		t.Errorf("food should skip a finished leader, got %d", got)
+	}
+	if got := pickTarget("salt", 0, []float64{0.5, 1.2}); got != -1 {
+		t.Errorf("nobody left to hit, got %d", got)
+	}
+}
+
+func TestConsolationAndStipend(t *testing.T) {
+	r := newRoom(Settings{Mode: modeCompetitive, Rounds: 3}, "TEST")
+	var ps []*Player
+	for i := 0; i < 3; i++ {
+		p := r.addPlayer(fmt.Sprintf("P%d", i))
+		p.connected = true
+		ps = append(ps, p)
+	}
+	r.start(ps[0])
+	for _, p := range ps {
+		r.ready(p)
+	}
+	if r.phase != "racing" {
+		t.Fatalf("phase %s", r.phase)
+	}
+	before := map[string]int{}
+	for _, p := range ps {
+		before[p.id] = p.coins
+	}
+	r.compFinishHeat()
+	unit := upgradeUnit(r.settings)
+	rows := r.comp.result
+	for _, row := range rows {
+		if got := r.find(row.ID).coins; row.Base != unit || got != before[row.ID]+row.Base+row.Prize {
+			t.Errorf("%s: base %d prize %d coins %d (was %d)", row.Name, row.Base, row.Prize, got, before[row.ID])
+		}
+	}
+	last, winner := r.find(rows[2].ID), r.find(rows[0].ID)
+	if last.free != 1 || !rows[2].Consolation || winner.free != 0 {
+		t.Errorf("only last place gets the free upgrade: last %d winner %d", last.free, winner.free)
+	}
+	r.compNext()
+	if r.phase != "shop" {
+		t.Fatalf("phase %s", r.phase)
+	}
+	coins := last.coins
+	if r.buy(last, "speed") != "" || last.coins != coins {
+		t.Errorf("the consolation pick should cost nothing: %d -> %d", coins, last.coins)
+	}
+	if last.free != 0 || r.shopLeft(last) != shopAllowance(2) {
+		t.Errorf("the free pick shouldn't use the paid allowance: free %d left %d", last.free, r.shopLeft(last))
+	}
+	if r.buy(last, "shell") != "" || last.coins != coins-unit {
+		t.Errorf("a paid upgrade after it should still cost coins: %d", last.coins)
 	}
 }

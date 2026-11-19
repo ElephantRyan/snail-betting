@@ -260,3 +260,45 @@ func TestTune(t *testing.T) {
 	printScore("tuned (re-measured with more runs)", evaluate(20000))
 	fmt.Printf("\nfinal: %+v\n", tune)
 }
+
+// TestBalanceShellBuff compares Shell strength settings in a heavy-attack field and a typical one.
+func TestBalanceShellBuff(t *testing.T) {
+	if os.Getenv("BALANCE") == "" {
+		t.Skip("set BALANCE=1 to run")
+	}
+	saved := tune
+	defer func() { tune = saved }()
+	const runs, lanes = 20000, 8
+	field := func(attackers int, a Upgrades) []Upgrades {
+		mods := make([]Upgrades, lanes)
+		for j := 1; j <= attackers; j++ {
+			mods[j] = a
+		}
+		return mods
+	}
+	pts := func(shell int, attackers int, a Upgrades) float64 {
+		rnd := mrand.New(mrand.NewPCG(11, 12)).Float64
+		total := 0.0
+		for i := 0; i < runs; i++ {
+			mods := field(attackers, a)
+			mods[0].Shell = shell
+			_, order, _ := simulateRaceWith(lanes, rnd, mods)
+			for place, lane := range order {
+				if lane == 0 {
+					total += float64(seedPoints[place])
+				}
+			}
+		}
+		return total / runs
+	}
+	fmt.Printf("%-22s %-26s %s\n", "shell setting", "typical room (3 shooters)", "heavy room (7 shooters, max)")
+	fmt.Printf("%-22s %-26s %s\n", "(block, shorten)", "pts gain shell 3 / 5", "pts gain shell 3 / 5")
+	for _, c := range [][2]float64{{0.044, 0.076}, {0.06, 0.10}, {0.08, 0.12}, {0.10, 0.15}} {
+		tune.ShellBlock, tune.ShellShort = c[0], c[1]
+		typ := Upgrades{Salt: 2, Food: 2}
+		heavy := Upgrades{Salt: 3, Food: 3}
+		t0, h0 := pts(0, 3, typ), pts(0, 7, heavy)
+		fmt.Printf("%-22s %+.2f / %+.2f              %+.2f / %+.2f\n", fmt.Sprintf("%.3f, %.3f", c[0], c[1]),
+			pts(3, 3, typ)-t0, pts(5, 3, typ)-t0, pts(3, 7, heavy)-h0, pts(5, 7, heavy)-h0)
+	}
+}

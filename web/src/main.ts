@@ -554,19 +554,20 @@ function renderShop(v: StateMsg, c: CompView): void {
   const upg = self.upg;
   if (!upg) return;
   const spare = self.coins;
-  const left = c.allow - (self.bought?.length ?? 0);
+  const left = self.left ?? 0;
+  const free = self.free ?? 0;
   $('shop-title').textContent = `Seeding round ${c.round} of ${c.rounds}: shop`;
   $('shop-note').textContent =
     (self.bailout ? 'You were broke, so the house lent you 50 coins. ' : '') +
-    'Upgrades last the whole game and make your snail faster; nobody steers during the race. The top 40% of each heat win prize money, and there is players sitting out a heat can bet on it. Most coins at the end is a second way to win.';
-  $('shop-coins').textContent = `${self.coins} coins · ${left} upgrade${left === 1 ? '' : 's'} left this round (one level per item)`;
+    'Upgrades last the whole game and make your snail faster; nobody steers during the race. Everyone is paid for racing (a bit extra if you are behind on coins), and the top 60% of each heat share the prize pool. Last place gets a free upgrade next round. Players sitting out a heat can bet on it, and most coins at the end is a second way to win.';
+  $('shop-coins').textContent = `${self.coins} coins · ${left} upgrade${left === 1 ? '' : 's'} left this round (one level per item)` + (free ? ' \u00b7 plus 1 FREE pick' : '');
   $('shop-items').replaceChildren(
     ...UPGRADES.map((u) => {
       const level = upg[u.key];
       const cost = c.unit * (level + 1);
-      const buy = el('button', { class: 'chip', text: level >= u.max ? 'Maxed' : `Buy ${cost}` });
+      const buy = el('button', { class: 'chip', text: level >= u.max ? 'Maxed' : free ? 'Free' : `Buy ${cost}` });
       buy.type = 'button';
-      buy.disabled = level >= u.max || cost > spare || self.bought?.includes(u.key) || left <= 0;
+      buy.disabled = level >= u.max || !!self.bought?.includes(u.key) || (!free && (cost > spare || left <= 0));
       buy.addEventListener('click', () => send({ type: 'buy', item: u.key }));
       const pips = '\u25cf'.repeat(level) + '\u25cb'.repeat(u.max - level);
       return el('div', { class: 'shop-row' }, el('b', { text: u.name }), buy, el('span', { class: 'desc' }, el('span', { class: 'pips', text: pips }), ` ${u.desc}`));
@@ -611,8 +612,8 @@ function renderCompResults(v: StateMsg, c: CompView): void {
     }),
   );
   $('cres-note').textContent =
-    `Seeding round ${c.round} of ${c.rounds}, heat ${c.heat} of ${c.heats}. Points go 8, 7, 6\u2026 by finish; the top ${rows.filter((r) => r.prize > 0).length} also win prize money.`;
-  const head = el('tr', {}, el('th', { text: 'Place' }), el('th', { text: 'Player' }), el('th', { class: 'num', text: 'Pts' }), el('th', { class: 'num', text: 'Prize' }));
+    `Seeding round ${c.round} of ${c.rounds}, heat ${c.heat} of ${c.heats}. Points go 8, 7, 6\u2026 by finish; the top ${rows.filter((r) => r.prize > 0).length} share the prize pool and everyone gets paid for racing.`;
+  const head = el('tr', {}, el('th', { text: 'Place' }), el('th', { text: 'Player' }), el('th', { class: 'num', text: 'Pts' }), el('th', { class: 'num', text: 'Coins' }));
   $('cres-table').replaceChildren(
     head,
     ...rows.map((r) => {
@@ -620,9 +621,9 @@ function renderCompResults(v: StateMsg, c: CompView): void {
         'tr',
         { class: r.id === v.me ? 'adv' : '' },
         el('td', { text: ordinal(r.place) }),
-        el('td', { text: r.name + (r.id === v.me ? ' (you)' : '') }),
+        el('td', { text: r.name + (r.id === v.me ? ' (you)' : '') + (r.consolation ? ' \u00b7 free upgrade next' : '') }),
         el('td', { class: 'num', text: `+${r.points}` }),
-        el('td', { class: `num ${r.prize ? 'gain' : ''}`, text: r.prize ? `+${r.prize}` : '\u2014' }),
+        el('td', { class: `num ${r.base + r.prize ? 'gain' : ''}`, text: r.base + r.prize ? `+${r.base + r.prize}` : '\u2014' }),
       );
     }),
   );

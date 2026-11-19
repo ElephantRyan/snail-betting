@@ -72,6 +72,7 @@ type Player struct {
 	optID, points, seed int
 	upg                 Upgrades
 	bought              []string // upgrades bought in this seeding round
+	free, freeBought    int      // a consolation upgrade waiting / used this round
 }
 
 type raceData struct {
@@ -410,6 +411,8 @@ type playerView struct {
 	Points    int       `json:"points,omitempty"`
 	Upg       *Upgrades `json:"upg,omitempty"`
 	Bought    []string  `json:"bought,omitempty"`
+	Left      int       `json:"left,omitempty"`
+	Free      int       `json:"free,omitempty"`
 }
 
 type stateMsg struct {
@@ -459,6 +462,7 @@ func (r *Room) view(p *Player) stateMsg {
 			u := q.upg
 			m.Players[i].Seed, m.Players[i].Points, m.Players[i].Upg = q.seed, q.points, &u
 			m.Players[i].Bought = q.bought
+			m.Players[i].Left, m.Players[i].Free = r.shopLeft(q), q.free
 		}
 	}
 	if r.settings.Mode == modeDecision {
@@ -662,6 +666,7 @@ func (r *Room) rematch(p *Player) string {
 		}
 		q.coins, q.bet, q.ready, q.bailout = r.settings.StartCoins, nil, false, false
 		q.points, q.seed, q.upg, q.bought = 0, 0, Upgrades{}, nil
+		q.free, q.freeBought = 0, 0
 		kept = append(kept, q)
 	}
 	r.players = kept

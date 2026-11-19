@@ -19,7 +19,7 @@ const (
 	maxStatLevel    = 5
 	maxAttackLevel  = 3   // shots fired per race
 	compStartCoins  = 200 // fixed: prices scale from it, so it is not a room setting
-	awardShare      = 2   // the top awardShare/awardOf of a heat's finishers win prize money
+	awardShare      = 3   // the top awardShare/awardOf of a heat's finishers share the prize pool
 	awardOf         = 5
 )
 
@@ -54,22 +54,34 @@ func (u *Upgrades) slot(item string) (*int, int) {
 	return nil, 0
 }
 
-// prizePlaces is how many finishers in a heat of n win prize money: the top 40%, at least one.
-func prizePlaces(n int) int { return min(len(placeWeights), max(1, n*awardShare/awardOf)) }
+// prizeWeights is each prize place's share of a heat's purse: flatter than the podium split, so
+// finishing mid-pack still pays.
+var prizeWeights = [...]int{40, 25, 18, 10, 7}
+
+// prizePlaces is how many finishers in a heat of n share the prize pool: the top 60%, at least one.
+func prizePlaces(n int) int { return min(len(prizeWeights), max(1, n*awardShare/awardOf)) }
+
+// participation is paid to every racer in a seeding heat on top of any prize, so a bad round never
+// leaves a player with nothing to shop with. Players behind the richest get a quarter of the gap
+// back as well (at most double the base), so an early money lead doesn't decide the game.
+func participation(s Settings, behind int) int {
+	u := upgradeUnit(s)
+	return u + min(2*u, max(0, behind)/4)
+}
 
 // prizeSplit divides a heat's purse (2 units per racer, paid by the house) among the prize places
-// in the podium ratio; the rounding crumbs go to first place.
+// by prizeWeights; the rounding crumbs go to first place.
 func prizeSplit(s Settings, n int) []int {
 	places := prizePlaces(n)
 	purse := n * 2 * upgradeUnit(s)
 	total := 0
-	for _, w := range placeWeights[:places] {
+	for _, w := range prizeWeights[:places] {
 		total += w
 	}
 	out := make([]int, places)
 	paid := 0
 	for i := range out {
-		out[i] = purse * placeWeights[i] / total
+		out[i] = purse * prizeWeights[i] / total
 		paid += out[i]
 	}
 	out[0] += purse - paid
@@ -99,7 +111,7 @@ type tuning struct {
 // Values found by TestTune (balance_test.go) so that the usual builds come out about even.
 var tune = tuning{
 	SpeedPer: 0.022, DetermPer: 0.033, BoostPer: 0.055,
-	ShellBlock: 0.044, ShellShort: 0.076,
+	ShellBlock: 0.07, ShellShort: 0.11,
 	SaltSlow: 0.36, SaltFrames: 115, FoodFrames: 37,
 }
 
@@ -146,9 +158,9 @@ func simulateRaceWith(lanes int, rnd func() float64, mods []Upgrades) ([][]int, 
 			if s.at != now || lanes < 2 {
 				continue
 			}
-			to := int(rnd() * float64(lanes-1))
-			if to >= s.from {
-				to++
+			to := pickTarget(s.kind, s.from, pos)
+			if to < 0 {
+				continue
 			}
 			shell := float64(mods[to].Shell)
 			ev := raceEvent{T: now, From: s.from, To: to, Kind: s.kind, Blocked: rnd() < tune.ShellBlock*shell}
@@ -234,6 +246,28 @@ func simulateRaceWith(lanes int, rnd func() float64, mods []Upgrades) ([][]int, 
 	return frames, order, events
 }
 
+// pickTarget decides who an attack hits, so being in front has a price. Food hits whoever leads
+// (apart from the shooter); salt hits the snail just ahead of the shooter, or the closest chaser
+// when the shooter leads. Snails that have finished can't be hit; -1 means nobody can.
+func pickTarget(kind string, from int, pos []float64) int {
+	leader, ahead := -1, -1
+	for i, p := range pos {
+		if i == from || p >= 1 {
+			continue
+		}
+		if leader < 0 || p > pos[leader] {
+			leader = i
+		}
+		if p > pos[from] && (ahead < 0 || p < pos[ahead]) {
+			ahead = i
+		}
+	}
+	if kind == "salt" && ahead >= 0 {
+		return ahead
+	}
+	return leader
+}
+
 func simulateRace(lanes int, rnd func() float64) ([][]int, []int) {
 	frames, order, _ := simulateRaceWith(lanes, rnd, nil)
 	return frames, order
@@ -274,12 +308,14 @@ func seededHeats(seeds []int) [][]int {
 // ---- room actions (caller holds r.mu) -------------------------------------------------
 
 type CompRow struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Lane   int    `json:"lane"`
-	Place  int    `json:"place"`
-	Points int    `json:"points"` // seeding heats only
-	Prize  int    `json:"prize"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Lane        int    `json:"lane"`
+	Place       int    `json:"place"`
+	Points      int    `json:"points"` // seeding heats only
+	Base        int    `json:"base"`   // participation pay, seeding heats only
+	Prize       int    `json:"prize"`
+	Consolation bool   `json:"consolation"` // last in a seeding heat: a free upgrade next round
 }
 
 // CompBet is a spectator's bet on the heat, settled when it finishes.
@@ -317,6 +353,7 @@ func (r *Room) startCompetitive() string {
 	for _, p := range r.players {
 		r.nextOptID++
 		p.optID, p.points, p.upg = r.nextOptID, 0, Upgrades{}
+		p.free, p.freeBought = 0, 0
 		r.options = append(r.options, Option{p.optID, p.name, p.id})
 	}
 	r.comp = &Comp{stage: "seed"}
@@ -335,6 +372,7 @@ func (r *Room) startShop() {
 	for i, q := range r.players {
 		ids[i] = q.optID
 		q.bet, q.ready, q.bailout, q.bought = nil, false, false, nil
+		q.freeBought = 0
 		if q.coins <= 0 {
 			q.coins, q.bailout = bailoutCoins, true
 		}
@@ -397,6 +435,10 @@ func (r *Room) compFinishHeat() {
 func (r *Room) settleHeat(lanes, order []int, seeding bool) {
 	c := r.comp
 	prizes := prizeSplit(r.settings, len(lanes))
+	richest := 0
+	for _, q := range r.players {
+		richest = max(richest, q.coins)
+	}
 	c.result = make([]CompRow, 0, len(lanes))
 	for place, lane := range order {
 		q := r.playerByOpt(lanes[lane])
@@ -404,6 +446,11 @@ func (r *Room) settleHeat(lanes, order []int, seeding bool) {
 		if seeding {
 			row.Points = seedPoints[place]
 			q.points += row.Points
+			row.Base = participation(r.settings, richest-q.coins)
+			q.coins += row.Base
+			if place == len(order)-1 && len(order) > 1 && c.round < r.settings.Rounds {
+				q.free, row.Consolation = 1, true
+			}
 		}
 		if place < len(prizes) {
 			row.Prize = prizes[place]
@@ -466,28 +513,49 @@ func (r *Room) beginElimination() {
 }
 
 // buy raises one of the player's upgrades by a level; only the seeding shops sell them.
+// quote is what an upgrade costs this player right now (0 for the consolation pick), or why they
+// can't buy it.
+func (r *Room) quote(p *Player, item string) (int, string) {
+	level, top := p.upg.slot(item)
+	switch {
+	case level == nil:
+		return 0, "Unknown upgrade."
+	case *level >= top:
+		return 0, "That upgrade is maxed out."
+	case slices.Contains(p.bought, item):
+		return 0, "You can only upgrade each item once per round."
+	case p.free > 0:
+		return 0, ""
+	case r.shopLeft(p) <= 0:
+		return 0, "You're out of upgrades for this round."
+	}
+	cost := upgradeUnit(r.settings) * (*level + 1)
+	if cost > p.coins {
+		return 0, "Not enough coins."
+	}
+	return cost, ""
+}
+
+// shopLeft is how many more upgrades the player may pay for this round; a consolation pick is extra.
+func (r *Room) shopLeft(p *Player) int {
+	return max(0, shopAllowance(r.comp.round)-(len(p.bought)-p.freeBought))
+}
+
 func (r *Room) buy(p *Player, item string) string {
 	if r.settings.Mode != modeCompetitive || r.phase != "shop" {
 		return "The shop is closed."
 	}
-	level, top := p.upg.slot(item)
-	if level == nil {
-		return "Unknown upgrade."
+	cost, err := r.quote(p, item)
+	if err != "" {
+		return err
 	}
-	if *level >= top {
-		return "That upgrade is maxed out."
+	level, _ := p.upg.slot(item)
+	if p.free > 0 {
+		p.free--
+		p.freeBought++
+	} else {
+		p.coins -= cost
 	}
-	if slices.Contains(p.bought, item) {
-		return "You can only upgrade each item once per round."
-	}
-	if len(p.bought) >= shopAllowance(r.comp.round) {
-		return "You're out of upgrades for this round."
-	}
-	cost := upgradeUnit(r.settings) * (*level + 1)
-	if cost > p.coins {
-		return "Not enough coins."
-	}
-	p.coins -= cost
 	*level++
 	p.bought = append(p.bought, item)
 	r.broadcast()

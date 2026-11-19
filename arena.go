@@ -89,12 +89,9 @@ func (g *arenaGame) legal(p *Player, mask []byte) bool {
 	choice := false
 	switch r.phase {
 	case "shop":
-		if len(p.bought) < shopAllowance(r.comp.round) {
-			for i, item := range shopItems {
-				level, top := p.upg.slot(item)
-				if *level < top && !slices.Contains(p.bought, item) && upgradeUnit(r.settings)*(*level+1) <= p.coins {
-					mask[i], choice = '1', true
-				}
+		for i, item := range shopItems {
+			if _, err := r.quote(p, item); err == "" {
+				mask[i], choice = '1', true
 			}
 		}
 	case "betting":
@@ -231,7 +228,7 @@ func (g *arenaGame) observe(seat int) []float32 {
 	o[0], o[1], o[2] = b2f(c.stage == "seed"), b2f(r.phase == "shop"), b2f(r.phase == "betting")
 	o[3] = float32(c.round) / rounds
 	if r.phase == "shop" {
-		o[4] = float32(shopAllowance(c.round)-len(p.bought)) / 6
+		o[4] = float32(r.shopLeft(p)+p.free) / 6
 	}
 	o[5] = min(2, float32(p.coins)/float32(2*compStartCoins))
 	maxPts := 8 * rounds
