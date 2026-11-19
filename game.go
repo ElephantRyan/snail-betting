@@ -35,6 +35,8 @@ type Settings struct {
 	StartCoins int    `json:"startCoins"`
 	BetSeconds int    `json:"betSeconds"` // 0 = no timer
 	Mode       string `json:"mode"`       // modeClassic | modeDecision
+	MaxBet     int    `json:"maxBet"`     // 0 = no limit
+	MaxBetPct  bool   `json:"maxBetPct"`  // MaxBet is a percent of the player's coins, not a flat amount
 }
 
 type Bet struct {
@@ -156,12 +158,29 @@ func cleanSettings(s Settings) Settings {
 	if s.Mode == modeDecision {
 		mode = modeDecision
 	}
-	return Settings{
+	out := Settings{
 		Rounds:     clampInt(s.Rounds, 1, 20),
 		StartCoins: clampInt(s.StartCoins, 100, 100000),
 		BetSeconds: clampInt(s.BetSeconds, 0, 180),
 		Mode:       mode,
+		MaxBet:     clampInt(s.MaxBet, 0, 100000),
+		MaxBetPct:  s.MaxBetPct,
 	}
+	if out.MaxBetPct {
+		out.MaxBet = min(out.MaxBet, 100)
+	}
+	return out
+}
+
+// betLimit is the most a player holding coins may stake in one bet.
+func (s Settings) betLimit(coins int) int {
+	if s.MaxBet <= 0 {
+		return coins
+	}
+	if s.MaxBetPct {
+		return clampInt(coins*s.MaxBet/100, min(1, coins), coins)
+	}
+	return min(coins, s.MaxBet)
 }
 
 // ---- race + payout logic --------------------------------------------------
@@ -641,8 +660,8 @@ func (r *Room) placeBet(p *Player, snail, amount int) string {
 	if snail < 0 || snail >= snailCount {
 		return "Pick a snail."
 	}
-	if amount < 1 || amount > p.coins {
-		return "Bet between 1 and " + strconv.Itoa(p.coins) + "."
+	if limit := r.settings.betLimit(p.coins); amount < 1 || amount > limit {
+		return "Bet between 1 and " + strconv.Itoa(limit) + "."
 	}
 	p.bet, p.ready = &Bet{snail, amount}, true
 	r.broadcast()

@@ -15,6 +15,8 @@ export interface Settings {
   startCoins: number;
   betSeconds: number;
   mode: Mode;
+  maxBet: number; // 0 = no limit
+  maxBetPct: boolean; // maxBet is a percent of the player's coins
 }
 
 export interface Bet {

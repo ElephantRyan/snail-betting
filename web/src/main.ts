@@ -205,6 +205,8 @@ $('create-form').addEventListener('submit', (e) => {
       startCoins: Number($<HTMLInputElement>('create-coins').value),
       betSeconds: Number($<HTMLInputElement>('create-timer').value),
       mode: $<HTMLSelectElement>('create-mode').value as Mode,
+      maxBet: Number($<HTMLInputElement>('create-maxbet').value),
+      maxBetPct: $<HTMLSelectElement>('create-maxbet-type').value === 'pct',
     },
   });
 });
@@ -483,10 +485,18 @@ amountInput.addEventListener('input', () => view && renderBetting(view));
 document.querySelectorAll<HTMLButtonElement>('.chip').forEach((c) =>
   c.addEventListener('click', () => {
     if (!view) return;
-    amountInput.value = String(Math.max(1, Math.floor(me(view).coins * Number(c.dataset.frac))));
+    amountInput.value = String(Math.max(1, Math.floor(betLimit(view) * Number(c.dataset.frac))));
     renderBetting(view);
   }),
 );
+
+// mirrors Settings.betLimit in game.go
+function betLimit(v: StateMsg): number {
+  const { coins } = me(v);
+  const { maxBet, maxBetPct } = v.settings;
+  if (maxBet <= 0) return coins;
+  return maxBetPct ? Math.min(coins, Math.max(Math.min(1, coins), Math.floor((coins * maxBet) / 100))) : Math.min(coins, maxBet);
+}
 
 function currentAmount(): number {
   const n = Math.floor(Number(amountInput.value));
@@ -496,10 +506,10 @@ function currentAmount(): number {
 function renderBetting(v: StateMsg): void {
   const self = me(v);
   const amount = currentAmount();
-  const validAmount = amount >= 1 && amount <= self.coins;
+  const validAmount = amount >= 1 && amount <= betLimit(v);
   const preview = Math.max(1, validAmount ? amount : 1);
 
-  amountInput.max = String(self.coins);
+  amountInput.max = String(betLimit(v));
   $('bailout-note').hidden = !self.bailout;
   if (self.bailout) $('bailout-note').textContent = 'You were broke, so the house lent you 50 coins. Spend them wisely.';
 
@@ -519,7 +529,7 @@ function renderBetting(v: StateMsg): void {
   if (v.myBet) {
     $('bet-status').textContent = `Locked in: ${v.myBet.amount} on ${laneLabel(v.myBet.snail)}. You can change it until betting closes.`;
   } else {
-    $('bet-status').textContent = `You have ${self.coins} coins. Pick a snail and an amount.`;
+    $('bet-status').textContent = `You have ${self.coins} coins${v.settings.maxBet > 0 ? ` (max bet ${betLimit(v)})` : ''}. Pick a snail and an amount.`;
   }
   updateTimer();
 }

@@ -38,7 +38,16 @@
             <label>Coins <input id="create-coins" type="number" min="100" max="100000" step="100" value="1000"></label>
             <label>Bet timer (s) <input id="create-timer" type="number" min="0" max="180" value="30"></label>
           </div>
-          <small>Timer 0 = betting stays open until everyone locks in or you close it.</small>
+          <div class="row3">
+            <label>Max bet <input id="create-maxbet" type="number" min="0" max="100000" value="0"></label>
+            <label>Max bet type
+              <select id="create-maxbet-type">
+                <option value="coins">Coins</option>
+                <option value="pct">% of coins</option>
+              </select>
+            </label>
+          </div>
+          <small>Max bet 0 = no limit.<br>Timer 0 = betting stays open until everyone locks in or you close it.</small>
         </div>
         <small id="decision-note" hidden>Everyone adds options (up to 64) and each one becomes a snail. They race in heats of 8, the top 4 of each heat move on, and the last race picks the winner.</small>
         <button class="btn" type="submit">Create room</button>
@@ -99,7 +108,7 @@
               <button type="button" class="chip" data-frac="0.1">10%</button>
               <button type="button" class="chip" data-frac="0.25">25%</button>
               <button type="button" class="chip" data-frac="0.5">50%</button>
-              <button type="button" class="chip" data-frac="1">ALL IN</button>
+              <button type="button" class="chip" data-frac="1">MAX BET</button>
             </div>
           </div>
           <div class="actions">
