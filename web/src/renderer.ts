@@ -119,12 +119,21 @@ function buildSprite(lane: number, frame: 0 | 1): HTMLCanvasElement {
   return c;
 }
 
+export interface RaceEvent {
+  t: number; // frame the attack lands
+  from: number;
+  to: number;
+  kind: 'salt' | 'food';
+  blocked: boolean;
+}
+
 export interface RaceAnim {
   frames: number[][];
   fps: number;
   startLocal: number; // Date.now() when the race (after countdown) starts
   order: number[]; // lanes, first across the line first
   labels?: string[] | null; // decision mode: the name on each lane
+  events?: RaceEvent[]; // competitive mode: attacks the snails fire at each other
 }
 
 export class TrackRenderer {
@@ -307,6 +316,7 @@ export class TrackRenderer {
     if (this.labels) {
       for (let i = 0; i < lanes; i++) this.drawName(g, this.labels[i]!, sx(lefts[i]!) + 2, TOP + i * laneH + 2, 16, 'left');
     }
+    if (this.race && moving) this.drawEvents(g, ((now - this.race.startLocal) / 1000) * this.race.fps, lefts, sx);
     g.restore();
 
     // lane chips stay put on the left
@@ -336,6 +346,29 @@ export class TrackRenderer {
       g.fillStyle = 'rgba(0,0,0,0.45)';
       g.fillRect(0, H / 2 - 20, W, 40);
       drawGlyphs(g, 'GO!', W / 2 - 23, H / 2 - 12, 4, '#c4b5fd');
+    }
+  }
+
+  /** Salt and food flying from the snail that fired them, then a marker over the target (a shield if its shell held). */
+  private drawEvents(g: Ctx, f: number, lefts: number[], sx: (wx: number) => number): void {
+    const r = this.race!;
+    const flight = 0.45; // seconds in the air
+    g.font = '16px sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const yOf = (lane: number) => TOP + lane * this.laneH + this.laneH / 2;
+    for (const e of r.events ?? []) {
+      const age = (f - e.t) / r.fps;
+      if (age < 0 || age > 1.6) continue;
+      const icon = e.kind === 'salt' ? '🧂' : '🍔';
+      const x1 = sx(lefts[e.to]!) + SPR_W / 2;
+      if (age < flight) {
+        const t = age / flight;
+        const x0 = sx(lefts[e.from]!) + SPR_W / 2;
+        g.fillText(icon, x0 + (x1 - x0) * t, yOf(e.from) + (yOf(e.to) - yOf(e.from)) * t - Math.sin(t * Math.PI) * 12);
+      } else {
+        g.fillText(e.blocked ? '🛡️' : icon, x1, yOf(e.to) - 8 - (age - flight) * 8);
+      }
     }
   }
 

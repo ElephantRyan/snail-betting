@@ -278,8 +278,8 @@ func (r *Room) startHeat() {
 	r.round++ // unique per heat; the client resets its track whenever this changes
 	r.phase = "racing"
 	r.deadline = 0
-	frames, order := simulateRace(len(lanes), mrand.Float64)
-	r.race = &raceData{frames, order, time.Now().UnixMilli() + countdownMs, labels}
+	frames, order, events := r.simulateHeat(lanes)
+	r.race = &raceData{frames, order, time.Now().UnixMilli() + countdownMs, labels, events}
 	raceDur := countdownMs*time.Millisecond + time.Duration(len(frames))*time.Second/fps + postRaceMs*time.Millisecond
 	r.setTimer(raceDur, r.finishHeat)
 	r.broadcast()
@@ -294,6 +294,9 @@ func (r *Room) finishHeat() {
 		return
 	}
 	lanes := b.heats[b.heat]
+	if r.comp != nil {
+		r.settleHeat(lanes, r.race.order, false)
+	}
 	ranked := make([]int, len(lanes)) // option ids, first to last
 	for i, lane := range r.race.order {
 		ranked[i] = lanes[lane]
@@ -360,7 +363,7 @@ func (r *Room) nextHeat() {
 		b.heats = planHeats(shuffled(b.advanced))
 		b.advanced, b.heat = nil, 0
 	}
-	r.startHeat()
+	r.readyHeat()
 }
 
 // ---- wire view ----------------------------------------------------------------------

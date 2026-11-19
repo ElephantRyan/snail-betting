@@ -2,8 +2,11 @@
 
 export const SNAIL_COUNT = 6;
 
-export type Phase = 'lobby' | 'snails' | 'betting' | 'racing' | 'results' | 'final';
-export type Mode = 'classic' | 'decision';
+export type Phase = 'lobby' | 'snails' | 'betting' | 'shop' | 'racing' | 'results' | 'final';
+export type Mode = 'classic' | 'decision' | 'competitive';
+
+// Competitive mode limits (see competitive.go)
+export const MAX_COMP_PLAYERS = 16;
 
 // Decision mode bracket limits (see decision.go)
 export const MAX_OPTIONS = 64;
@@ -31,6 +34,51 @@ export interface PlayerView {
   connected: boolean;
   ready: boolean;
   bailout: boolean;
+  seed?: number; // competitive: 1 = best after seeding
+  points?: number;
+  upg?: Upgrades;
+  bought?: UpgradeKey[]; // upgrades bought this seeding round
+}
+
+export interface Upgrades {
+  speed: number;
+  determ: number;
+  boost: number;
+  shell: number;
+  salt: number;
+  food: number;
+}
+
+export type UpgradeKey = keyof Upgrades;
+
+export interface CompRow {
+  id: string;
+  name: string;
+  lane: number;
+  place: number;
+  points: number; // seeding heats only
+  prize: number;
+}
+
+export interface CompBet {
+  id: string;
+  name: string;
+  lane: number;
+  amount: number;
+  payout: number;
+}
+
+export interface CompView {
+  stage: 'seed' | 'elim';
+  round: number; // seeding round
+  rounds: number;
+  heat: number;
+  heats: number;
+  unit: number; // price of the first level of an upgrade
+  allow: number; // upgrades each player may buy this seeding round
+  lanes: string[] | null; // player ids in lane order for the current heat
+  result: CompRow[] | null; // the heat that just finished
+  bets: CompBet[] | null; // spectators' bets on it
 }
 
 export interface ResultRow {
@@ -67,6 +115,7 @@ export interface StateMsg {
   myBet: Bet | null;
   results: Results | null;
   decision?: DecisionView;
+  comp?: CompView;
 }
 
 export interface OptionView {
@@ -101,6 +150,14 @@ export interface DecisionView {
   standings: StandRow[] | null;
 }
 
+export interface RaceEvent {
+  t: number;
+  from: number;
+  to: number;
+  kind: 'salt' | 'food';
+  blocked: boolean;
+}
+
 export interface RaceMsg {
   type: 'race';
   serverNow: number;
@@ -109,6 +166,7 @@ export interface RaceMsg {
   frames: number[][]; // [frame][lane], 1000 = finish line, runs past it until every snail is off screen
   order: number[]; // lanes, first to cross the line first
   labels?: string[]; // decision mode: the name on each lane
+  events?: RaceEvent[];
 }
 
 export interface JoinedMsg {
@@ -143,7 +201,9 @@ export type ClientMsg =
   | { type: 'start' | 'close' | 'next' | 'rematch' | 'begin' }
   | { type: 'addSnail'; name: string; force?: boolean }
   | { type: 'removeSnail'; id: number }
-  | { type: 'bet'; snail: number; amount: number };
+  | { type: 'bet'; snail: number; amount: number }
+  | { type: 'buy'; item: UpgradeKey }
+  | { type: 'ready' };
 
 export const SNAILS = [
   { name: 'Red', color: '#e5484d' },

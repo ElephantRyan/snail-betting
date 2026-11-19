@@ -3,10 +3,8 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"math"
 	mrand "math/rand/v2"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,6 +67,11 @@ type Player struct {
 	connected       bool
 	bet             *Bet
 	ready, bailout  bool
+
+	// competitive mode
+	optID, points, seed int
+	upg                 Upgrades
+	bought              []string // upgrades bought in this seeding round
 }
 
 type raceData struct {
@@ -76,6 +79,7 @@ type raceData struct {
 	order   []int // lanes by finishing position; order[0] is the winner
 	startAt int64
 	labels  []string // decision mode: the name on each lane
+	events  []raceEvent
 }
 
 type Room struct {
@@ -98,6 +102,8 @@ type Room struct {
 	options   []Option
 	nextOptID int
 	bracket   *Bracket
+	comp      *Comp // competitive mode
+	headless  bool  // bot arena: nothing waits on a real-time timer
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -155,8 +161,8 @@ func clampInt(v, lo, hi int) int { return max(lo, min(hi, v)) }
 
 func cleanSettings(s Settings) Settings {
 	mode := modeClassic
-	if s.Mode == modeDecision {
-		mode = modeDecision
+	if s.Mode == modeDecision || s.Mode == modeCompetitive {
+		mode = s.Mode
 	}
 	out := Settings{
 		Rounds:     clampInt(s.Rounds, 1, 20),
@@ -165,6 +171,9 @@ func cleanSettings(s Settings) Settings {
 		Mode:       mode,
 		MaxBet:     clampInt(s.MaxBet, 0, 100000),
 		MaxBetPct:  s.MaxBetPct,
+	}
+	if mode == modeCompetitive {
+		out.StartCoins = compStartCoins
 	}
 	if out.MaxBetPct {
 		out.MaxBet = min(out.MaxBet, 100)
@@ -184,51 +193,6 @@ func (s Settings) betLimit(coins int) int {
 }
 
 // ---- race + payout logic --------------------------------------------------
-
-// Every snail draws from the same distribution, so each has an equal chance.
-// Returns positions per frame (ints, 1000 = finish line) plus the lanes in the order
-// they crossed it. The race runs on until every snail has left the screen
-// (exitProgress, which the client's camera is built around).
-func simulateRace(lanes int, rnd func() float64) ([][]int, []int) {
-	mean := 1.0 / (fps * 14)
-	pos, mood, crossed := make([]float64, lanes), make([]float64, lanes), make([]float64, lanes)
-	for i := range crossed {
-		crossed[i] = math.Inf(1)
-	}
-	frames := [][]int{make([]int, lanes)}
-	for len(frames) < fps*60 {
-		allOut := true
-		for i := range pos {
-			prev := pos[i]
-			mood[i] = math.Max(-1, math.Min(1, mood[i]*0.96+(rnd()-0.5)*0.5))
-			pos[i] += mean * (0.7 + 0.6*rnd() + 0.5*mood[i])
-			if math.IsInf(crossed[i], 1) && pos[i] >= 1 {
-				// sub-frame crossing time, so two snails in the same frame still have an order
-				crossed[i] = float64(len(frames)-1) + (1-prev)/(pos[i]-prev)
-			}
-			allOut = allOut && pos[i] >= exitProgress
-		}
-		f := make([]int, lanes)
-		for i, p := range pos {
-			f[i] = int(math.Round(p * 1000))
-		}
-		frames = append(frames, f)
-		if allOut {
-			break
-		}
-	}
-	order := make([]int, lanes)
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(a, b int) bool {
-		if crossed[order[a]] != crossed[order[b]] {
-			return crossed[order[a]] < crossed[order[b]]
-		}
-		return pos[order[a]] > pos[order[b]]
-	})
-	return frames, order
-}
 
 type stake struct {
 	id            string
@@ -300,6 +264,22 @@ func newRoom(s Settings, code string) *Room {
 	return &Room{code: code, settings: cleanSettings(s), phase: "lobby", touched: time.Now()}
 }
 
+// playerCap is how many players the room takes.
+func (r *Room) playerCap() int {
+	if r.settings.Mode == modeCompetitive {
+		return maxCompPlayers
+	}
+	return maxPlayers
+}
+
+// laneCount is how many snails the current betting round has to choose from.
+func (r *Room) laneCount() int {
+	if r.comp != nil && r.comp.stage == "elim" && r.bracket != nil {
+		return len(r.bracket.heats[r.bracket.heat])
+	}
+	return snailCount
+}
+
 func (r *Room) find(id string) *Player {
 	for _, p := range r.players {
 		if p.id == id {
@@ -366,7 +346,7 @@ func (r *Room) detach(p *Player, c *client) {
 	p.client, p.connected = nil, false
 	if r.phase == "lobby" && r.hostID != p.id {
 		r.removePlayer(p.id)
-	} else if r.phase == "betting" {
+	} else if r.phase == "betting" || r.phase == "shop" {
 		r.maybeCloseBetting()
 	}
 	if r.hostID == p.id {
@@ -404,51 +384,60 @@ func (r *Room) transferHost() {
 	}
 }
 
-func (r *Room) pools() (pools, backers [snailCount]int) {
+func (r *Room) pools() (pools, backers []int) {
+	pools, backers = make([]int, r.laneCount()), make([]int, r.laneCount())
 	for _, p := range r.players {
 		if p.bet != nil {
-			pools[p.bet.Snail] += p.bet.Amount
-			backers[p.bet.Snail]++
+			if p.bet.Snail < len(pools) {
+				pools[p.bet.Snail] += p.bet.Amount
+				backers[p.bet.Snail]++
+			}
 		}
 	}
 	return
 }
 
 type playerView struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Coins     int    `json:"coins"`
-	Connected bool   `json:"connected"`
-	Ready     bool   `json:"ready"`
-	Bailout   bool   `json:"bailout"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Coins     int       `json:"coins"`
+	Connected bool      `json:"connected"`
+	Ready     bool      `json:"ready"`
+	Bailout   bool      `json:"bailout"`
+	Seed      int       `json:"seed,omitempty"`
+	Points    int       `json:"points,omitempty"`
+	Upg       *Upgrades `json:"upg,omitempty"`
+	Bought    []string  `json:"bought,omitempty"`
 }
 
 type stateMsg struct {
-	Type      string          `json:"type"`
-	ServerNow int64           `json:"serverNow"`
-	Code      string          `json:"code"`
-	Phase     string          `json:"phase"`
-	Round     int             `json:"round"`
-	Settings  Settings        `json:"settings"`
-	Deadline  *int64          `json:"deadline"`
-	HostID    string          `json:"hostId"`
-	Me        string          `json:"me"`
-	Players   []playerView    `json:"players"`
-	Pools     [snailCount]int `json:"pools"`
-	Backers   [snailCount]int `json:"backers"`
-	MyBet     *Bet            `json:"myBet"`
-	Results   *Results        `json:"results"`
-	Decision  *decisionView   `json:"decision,omitempty"`
+	Type      string        `json:"type"`
+	ServerNow int64         `json:"serverNow"`
+	Code      string        `json:"code"`
+	Phase     string        `json:"phase"`
+	Round     int           `json:"round"`
+	Settings  Settings      `json:"settings"`
+	Deadline  *int64        `json:"deadline"`
+	HostID    string        `json:"hostId"`
+	Me        string        `json:"me"`
+	Players   []playerView  `json:"players"`
+	Pools     []int         `json:"pools"`
+	Backers   []int         `json:"backers"`
+	MyBet     *Bet          `json:"myBet"`
+	Results   *Results      `json:"results"`
+	Decision  *decisionView `json:"decision,omitempty"`
+	Comp      *compView     `json:"comp,omitempty"`
 }
 
 type raceMsg struct {
-	Type      string   `json:"type"`
-	ServerNow int64    `json:"serverNow"`
-	StartAt   int64    `json:"startAt"`
-	FPS       int      `json:"fps"`
-	Frames    [][]int  `json:"frames"`
-	Order     []int    `json:"order"`
-	Labels    []string `json:"labels,omitempty"`
+	Type      string      `json:"type"`
+	ServerNow int64       `json:"serverNow"`
+	StartAt   int64       `json:"startAt"`
+	FPS       int         `json:"fps"`
+	Frames    [][]int     `json:"frames"`
+	Order     []int       `json:"order"`
+	Labels    []string    `json:"labels,omitempty"`
+	Events    []raceEvent `json:"events,omitempty"`
 }
 
 func (r *Room) view(p *Player) stateMsg {
@@ -463,10 +452,21 @@ func (r *Room) view(p *Player) stateMsg {
 		m.Deadline = &r.deadline
 	}
 	for i, q := range r.players {
-		m.Players[i] = playerView{q.id, q.name, q.coins, q.connected, q.ready, q.bailout}
+		m.Players[i] = playerView{ID: q.id, Name: q.name, Coins: q.coins, Connected: q.connected, Ready: q.ready, Bailout: q.bailout}
+		if r.settings.Mode == modeCompetitive {
+			u := q.upg
+			m.Players[i].Seed, m.Players[i].Points, m.Players[i].Upg = q.seed, q.points, &u
+			m.Players[i].Bought = q.bought
+		}
 	}
 	if r.settings.Mode == modeDecision {
 		m.Decision = r.decisionView()
+	}
+	if r.settings.Mode == modeCompetitive {
+		m.Comp = r.compView()
+		if r.bracket != nil {
+			m.Decision = r.decisionView()
+		}
 	}
 	return m
 }
@@ -484,10 +484,13 @@ func (r *Room) sendRace(p *Player) {
 	if r.race == nil || p.client == nil {
 		return
 	}
-	p.client.sendJSON(raceMsg{"race", time.Now().UnixMilli(), r.race.startAt, fps, r.race.frames, r.race.order, r.race.labels})
+	p.client.sendJSON(raceMsg{"race", time.Now().UnixMilli(), r.race.startAt, fps, r.race.frames, r.race.order, r.race.labels, r.race.events})
 }
 
 func (r *Room) setTimer(d time.Duration, fn func()) {
+	if r.headless {
+		return
+	}
 	if r.timer != nil {
 		r.timer.Stop()
 	}
@@ -514,6 +517,9 @@ func (r *Room) clearTimer() {
 func (r *Room) start(p *Player) string {
 	if p.id != r.hostID || r.phase != "lobby" {
 		return "Only the host can start from the lobby."
+	}
+	if r.settings.Mode == modeCompetitive {
+		return r.startCompetitive()
 	}
 	if r.settings.Mode == modeDecision {
 		r.phase = "snails"
@@ -544,19 +550,33 @@ func (r *Room) startBetting() {
 }
 
 func (r *Room) maybeCloseBetting() {
-	if r.phase != "betting" {
+	if r.phase != "betting" && r.phase != "shop" {
 		return
 	}
 	live := 0
 	for _, q := range r.players {
 		if q.connected {
 			live++
-			if !q.ready {
+			if !q.ready && !r.isRacing(q) { // snails that are racing don't bet
 				return
 			}
 		}
 	}
 	if live > 0 {
+		r.closeRound()
+	}
+}
+
+// closeRound ends the betting (classic) or the shop (competitive) and starts the race.
+func (r *Room) closeRound() {
+	switch {
+	case r.phase == "shop":
+		r.compCloseShop()
+	case r.settings.Mode == modeCompetitive:
+		if r.phase == "betting" {
+			r.startHeat()
+		}
+	default:
 		r.closeBetting()
 	}
 }
@@ -568,7 +588,7 @@ func (r *Room) closeBetting() {
 	r.phase = "racing"
 	r.deadline = 0
 	frames, order := simulateRace(snailCount, mrand.Float64)
-	r.race = &raceData{frames, order, time.Now().UnixMilli() + countdownMs, nil}
+	r.race = &raceData{frames, order, time.Now().UnixMilli() + countdownMs, nil, nil}
 	raceDur := countdownMs*time.Millisecond + time.Duration(len(frames))*time.Second/fps + postRaceMs*time.Millisecond
 	r.setTimer(raceDur, r.finishRace)
 	r.broadcast()
@@ -610,7 +630,10 @@ func (r *Room) next(p *Player) string {
 	if p.id != r.hostID || r.phase != "results" {
 		return "Only the host can continue."
 	}
-	if r.settings.Mode == modeDecision {
+	if r.settings.Mode == modeCompetitive && r.comp.stage == "seed" {
+		return r.compNext()
+	}
+	if r.settings.Mode != modeClassic {
 		r.nextHeat()
 		return ""
 	}
@@ -629,13 +652,14 @@ func (r *Room) rematch(p *Player) string {
 	}
 	r.phase, r.round = "lobby", 0
 	r.results, r.race = nil, nil
-	r.options, r.bracket = nil, nil
+	r.options, r.bracket, r.comp = nil, nil, nil
 	kept := r.players[:0]
 	for _, q := range r.players {
 		if !q.connected {
 			continue
 		}
 		q.coins, q.bet, q.ready, q.bailout = r.settings.StartCoins, nil, false, false
+		q.points, q.seed, q.upg, q.bought = 0, 0, Upgrades{}, nil
 		kept = append(kept, q)
 	}
 	r.players = kept
@@ -644,10 +668,10 @@ func (r *Room) rematch(p *Player) string {
 }
 
 func (r *Room) forceClose(p *Player) string {
-	if p.id != r.hostID || r.phase != "betting" {
+	if p.id != r.hostID || (r.phase != "betting" && r.phase != "shop") {
 		return "Only the host can close betting."
 	}
-	r.closeBetting()
+	r.closeRound()
 	return ""
 }
 
@@ -657,7 +681,10 @@ func (r *Room) placeBet(p *Player, snail, amount int) string {
 	if r.phase != "betting" {
 		return "Betting is closed."
 	}
-	if snail < 0 || snail >= snailCount {
+	if r.isRacing(p) {
+		return "You're racing this heat, so you can't bet on it."
+	}
+	if snail < 0 || snail >= r.laneCount() {
 		return "Pick a snail."
 	}
 	if limit := r.settings.betLimit(p.coins); amount < 1 || amount > limit {

@@ -1,16 +1,19 @@
 import './style.css';
 import {
+  MAX_COMP_PLAYERS,
   MAX_HEAT,
   MAX_OPTIONS,
   MAX_OPTION_LEN,
   SNAILS,
   SNAIL_COUNT,
   type ClientMsg,
+  type CompView,
   type DecisionView,
   type Mode,
   type PlayerView,
   type ServerMsg,
   type StateMsg,
+  type UpgradeKey,
 } from './protocol';
 import { TrackRenderer } from './renderer';
 
@@ -145,6 +148,7 @@ function onMessage(m: ServerMsg): void {
         startLocal: Date.now() + (m.startAt - m.serverNow),
         order: m.order,
         labels: m.labels ?? null,
+        events: m.events,
       });
       render();
       break;
@@ -183,10 +187,23 @@ $('join-form').addEventListener('submit', (e) => {
 });
 
 const modeSelect = $<HTMLSelectElement>('create-mode');
+const roundsInput = $<HTMLInputElement>('create-rounds');
+const timerInput = $<HTMLInputElement>('create-timer');
+let roundsEdited = false;
+let timerEdited = false;
+roundsInput.addEventListener('input', () => (roundsEdited = true));
+timerInput.addEventListener('input', () => (timerEdited = true));
 function syncMode(): void {
   const decision = modeSelect.value === 'decision';
+  const comp = modeSelect.value === 'competitive';
   $('classic-opts').hidden = decision;
   $('decision-note').hidden = !decision;
+  $('comp-note').hidden = !comp;
+  $('coins-label').hidden = comp;
+  $('rounds-label').textContent = comp ? 'Seeding rounds' : 'Rounds';
+  $('timer-label').textContent = comp ? 'Shop timer (s)' : 'Bet timer (s)';
+  if (!roundsEdited) roundsInput.value = comp ? '4' : '5';
+  if (!timerEdited) timerInput.value = comp ? '45' : '30';
 }
 modeSelect.addEventListener('change', syncMode);
 syncMode();
@@ -213,7 +230,7 @@ $('create-form').addEventListener('submit', (e) => {
 
 // ---- game screen ------------------------------------------------------------------
 
-const PANELS = ['lobby', 'snails', 'betting', 'racing', 'results', 'final', 'dheat', 'dfinal'] as const;
+const PANELS = ['lobby', 'snails', 'betting', 'shop', 'racing', 'results', 'final', 'cresults', 'dheat', 'dfinal'] as const;
 
 function showPanel(name: (typeof PANELS)[number]): void {
   for (const p of PANELS) $(`panel-${p}`).hidden = p !== name;
@@ -226,20 +243,33 @@ function me(v: StateMsg): PlayerView {
 const isHost = (v: StateMsg) => v.me === v.hostId;
 
 const isDecision = (v: StateMsg) => v.settings.mode === 'decision';
+const isComp = (v: StateMsg) => v.settings.mode === 'competitive';
 
 const optionName = (d: DecisionView, id: number) => d.options.find((o) => o.id === id)?.name ?? '?';
 const laneNames = (d: DecisionView) => (d.lanes ?? []).map((id) => optionName(d, id));
+const playerName = (v: StateMsg, id: string) => v.players.find((p) => p.id === id)?.name ?? '?';
+
+// the name on each lane of the heat in view, or null when lanes are just numbered (classic)
+function currentLaneNames(v: StateMsg): string[] | null {
+  if (v.comp?.lanes) return v.comp.lanes.map((id) => playerName(v, id));
+  return v.decision?.lanes ? laneNames(v.decision) : null;
+}
 
 function render(): void {
   const v = view;
   if (!v) return;
-  const d = isDecision(v) ? v.decision : undefined;
+  rebuildPicks(currentLaneNames(v));
+  const c = isComp(v) ? v.comp : undefined;
+  const compSeed = c?.stage === 'seed';
+  // decision mode always has the bracket view; competitive only once elimination starts
+  const d = isDecision(v) || c?.stage === 'elim' ? v.decision : undefined;
 
   if (v.round !== lastRound) {
     // new round (or heat): snails back to the line, bet draft restored from the server (page refresh) or cleared
     lastRound = v.round;
     hasRace = false;
-    if (d?.lanes) renderer.reset(d.lanes.length, laneNames(d));
+    const names = currentLaneNames(v);
+    if (names) renderer.reset(names.length, names);
     else renderer.reset();
     draftPick = v.myBet?.snail ?? null;
     $<HTMLInputElement>('amount').value = v.myBet ? String(v.myBet.amount) : '';
@@ -248,12 +278,14 @@ function render(): void {
     if (d?.result && d.lanes && (v.phase === 'results' || v.phase === 'final')) {
       const lanes = d.lanes;
       renderer.parkPodium(d.result.order.map((id) => lanes.indexOf(id)), laneNames(d));
+    } else if (compSeed && v.phase === 'results' && c?.result) {
+      renderer.parkPodium(c.result.map((row) => row.lane), currentLaneNames(v));
     } else if (v.phase === 'results' && v.results) renderer.parkPodium(v.results.order);
   }
-  $('track').hidden = !!d && (v.phase === 'lobby' || v.phase === 'snails');
+  $('track').hidden = (!!d && (v.phase === 'lobby' || v.phase === 'snails')) || (!!c && v.phase === 'shop');
 
   $('code-btn').textContent = v.code;
-  $('round-label').textContent = roundLabel(v, d);
+  $('round-label').textContent = roundLabel(v, d, c);
   const heatFinal = !!d && d.heats === 1;
   renderer.setAdvance(d && d.lanes && !heatFinal ? Math.min(4, d.lanes.length - 1) : null);
   renderer.setSelected(v.phase === 'betting' ? draftPick : null);
@@ -261,37 +293,54 @@ function render(): void {
 
   // keep showing the race until its animation has played out, even if the server already moved on
   const phase = (v.phase === 'results' || v.phase === 'final') && renderer.running ? 'racing' : v.phase;
-  const panel = d && phase === 'results' ? 'dheat' : d && phase === 'final' ? 'dfinal' : phase;
+  const panel = compSeed && phase === 'results' ? 'cresults' : d && phase === 'results' ? 'dheat' : d && phase === 'final' ? 'dfinal' : phase;
   showPanel(panel);
   if (phase !== 'snails') $('similar-box').hidden = true;
   if (phase === 'lobby') renderLobby(v);
   else if (phase === 'snails') renderSnails(v, d!);
   else if (phase === 'betting') renderBetting(v);
+  else if (phase === 'shop') renderShop(v, c!);
   else if (phase === 'racing') {
-    $('racing-pool-line').hidden = !!d;
-    if (d) renderDecisionRacing(d);
+    $('racing-pool-line').hidden = !!d || !!c;
+    if (compSeed) renderCompRacing(v, c!);
+    else if (d) renderDecisionRacing(v, d);
     else $('racing-pool').textContent = String(v.pools.reduce((a, b) => a + b, 0));
   } else if (phase === 'results') {
-    if (d) renderHeatResults(v, d);
+    if (compSeed) renderCompResults(v, c!);
+    else if (d) renderHeatResults(v, d);
     else renderResults(v);
   } else if (d) renderDecisionFinal(v, d);
   else renderFinal(v);
 }
 
-function roundLabel(v: StateMsg, d: DecisionView | undefined): string {
+function roundLabel(v: StateMsg, d: DecisionView | undefined, c: CompView | undefined): string {
+  if (c?.stage === 'seed') {
+    const seeding = `Seeding ${c.round} / ${c.rounds}`;
+    return v.phase === 'shop' ? `${seeding} \u00b7 Shop` : `${seeding} \u00b7 Heat ${c.heat} / ${c.heats}`;
+  }
   if (d) {
     if (v.phase === 'lobby') return 'Lobby';
     if (v.phase === 'snails') return 'Add snails';
     const final = d.heats === 1 && d.round === d.rounds;
-    return final ? 'Final' : `Round ${d.round} / ${d.rounds} \u00b7 Heat ${d.heat} / ${d.heats}`;
+    const prefix = c ? 'Elimination ' : '';
+    return final ? 'Final' : `${prefix}Round ${d.round} / ${d.rounds} \u00b7 Heat ${d.heat} / ${d.heats}`;
   }
   return v.round > 0 ? `Round ${v.round} / ${v.settings.rounds}` : 'Lobby';
 }
 
 function renderBoard(v: StateMsg): void {
   const decision = isDecision(v);
-  const sorted = decision ? [...v.players] : [...v.players].sort((a, b) => b.coins - a.coins);
-  $('board-title').textContent = decision ? 'Players' : 'Leaderboard';
+  const comp = isComp(v);
+  const seeded = comp && v.comp?.stage === 'elim';
+  const sorted = decision
+    ? [...v.players]
+    : seeded
+      ? [...v.players].sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0))
+      : comp
+        ? [...v.players].sort((a, b) => (b.points ?? 0) - (a.points ?? 0) || b.coins - a.coins)
+        : [...v.players].sort((a, b) => b.coins - a.coins);
+  $('board-title').textContent = decision ? 'Players' : comp ? (seeded ? 'Seeds' : 'Standings') : 'Leaderboard';
+  const detail = (p: PlayerView) => (decision ? snailCountLabel(v, p.id) : seeded ? `${p.coins}` : comp ? `${p.points ?? 0} pts \u00b7 ${p.coins}` : String(p.coins));
   $('board').replaceChildren(
     ...sorted.map((p, i) =>
       el(
@@ -299,8 +348,8 @@ function renderBoard(v: StateMsg): void {
         { class: [p.id === v.me ? 'me' : '', p.connected ? '' : 'off'].join(' ').trim() },
         el('span', { text: `${i + 1}.` }),
         el('span', { class: 'name', text: p.name + (p.id === v.hostId ? ' ★' : '') }),
-        el('span', { class: 'tick', text: v.phase === 'betting' && p.ready ? '✓' : '' }),
-        el('span', { class: 'coins', text: decision ? snailCountLabel(v, p.id) : String(p.coins) }),
+        el('span', { class: 'tick', text: (v.phase === 'betting' || v.phase === 'shop') && p.ready ? '✓' : '' }),
+        el('span', { class: 'coins', text: detail(p) }),
       ),
     ),
   );
@@ -315,7 +364,9 @@ function renderLobby(v: StateMsg): void {
   $('lobby-code').textContent = v.code;
   $('lobby-note').textContent = isDecision(v)
     ? 'Share the code or tap it above to copy an invite link. Everyone adds their options next, then the snails race to decide.'
-    : 'Share the code or tap it above to copy an invite link. Nobody can join once the first round of betting starts.';
+    : isComp(v)
+      ? `Share the code or tap it above to copy an invite link. Everyone gets their own snail (up to ${MAX_COMP_PLAYERS} players): ${v.settings.rounds} seeding round${v.settings.rounds === 1 ? '' : 's'}, then elimination.`
+      : 'Share the code or tap it above to copy an invite link. Nobody can join once the first round of betting starts.';
   const host = isHost(v);
   $('start-btn').hidden = !host;
   $('lobby-wait').hidden = host;
@@ -397,10 +448,14 @@ function renderSnails(v: StateMsg, d: DecisionView): void {
   $('snails-wait').hidden = host;
 }
 
-function renderDecisionRacing(d: DecisionView): void {
+function renderDecisionRacing(v: StateMsg, d: DecisionView): void {
   const final = d.heats === 1 && d.round === d.rounds;
   $('racing-title').textContent = final ? 'The final' : `Round ${d.round} of ${d.rounds}, heat ${d.heat} of ${d.heats}`;
-  const lineup = (d.lanes ?? []).map((id, lane) => el('span', { class: 'lineup' }, dot(lane), optionName(d, id)));
+  const seedOf = (id: number) => {
+    const owner = isComp(v) ? v.players.find((p) => p.id === d.options.find((o) => o.id === id)?.by) : undefined;
+    return owner?.seed ? ` (seed ${owner.seed})` : '';
+  };
+  const lineup = (d.lanes ?? []).map((id, lane) => el('span', { class: 'lineup' }, dot(lane), optionName(d, id) + seedOf(id)));
   $('racing-line').replaceChildren(...lineup);
 }
 
@@ -413,16 +468,34 @@ function renderHeatResults(v: StateMsg, d: DecisionView): void {
   const lanes = d.lanes ?? [];
   $('dheat-title').textContent = `${r.advance} snails move on`;
   $('dheat-note').textContent = `Round ${d.round} of ${d.rounds}, heat ${d.heat} of ${d.heats}. The top ${r.advance} of ${r.order.length} move on.`;
-  const head = el('tr', {}, el('th', { text: 'Snail' }), el('th', { text: '' }));
+const c = isComp(v) ? v.comp : undefined;
+  const prizeOf = (lane: number) => c?.result?.find((row) => row.lane === lane)?.prize ?? 0;
+  const head = el('tr', {}, el('th', { text: isComp(v) ? 'Player' : 'Snail' }), ...(c ? [el('th', { class: 'num', text: 'Prize' })] : []), el('th', { text: '' }));
   const rows = r.order.map((id, i) =>
     el(
       'tr',
       { class: i < r.advance ? 'adv' : 'out' },
       el('td', {}, dot(lanes.indexOf(id)), optionName(d, id)),
+      ...(c ? [el('td', { class: 'num', text: prizeOf(lanes.indexOf(id)) ? `+${prizeOf(lanes.indexOf(id))}` : '\u2014' })] : []),
       el('td', { class: 'num', text: i < r.advance ? 'Advances' : 'Out' }),
     ),
   );
   $('dheat-table').replaceChildren(head, ...rows);
+  const bets = c?.bets ?? [];
+  $('dheat-bets-note').hidden = bets.length === 0;
+  $('dheat-bets').hidden = bets.length === 0;
+  $('dheat-bets').replaceChildren(
+    ...bets.map((b) => {
+      const net = b.payout - b.amount;
+      return el(
+        'tr',
+        {},
+        el('td', { text: b.name + (b.id === v.me ? ' (you)' : '') }),
+        el('td', { text: `${b.amount} on ${optionName(d, lanes[b.lane] ?? -1)}` }),
+        el('td', { class: `num ${net > 0 ? 'gain' : net < 0 ? 'loss' : ''}`, text: net > 0 ? `+${net}` : String(net) }),
+      );
+    }),
+  );
   const host = isHost(v);
   const next = $<HTMLButtonElement>('dnext-btn');
   next.hidden = !host;
@@ -434,7 +507,8 @@ function renderDecisionFinal(v: StateMsg, d: DecisionView): void {
   const rows = d.standings ?? [];
   const winner = rows[0];
   $('dfinal-title').textContent = winner ? `${optionName(d, winner.option)} wins!` : 'Final standings';
-  const head = el('tr', {}, el('th', { text: 'Rank' }), el('th', { text: 'Snail' }), el('th', { text: 'Result' }), el('th', { text: 'Added by' }));
+  const comp = isComp(v);
+  const head = el('tr', {}, el('th', { text: 'Rank' }), el('th', { text: comp ? 'Player' : 'Snail' }), el('th', { text: 'Result' }), ...(comp ? [] : [el('th', { text: 'Added by' })]));
   const body = rows.map((s) => {
     const o = d.options.find((x) => x.id === s.option);
     const result = s.round === d.rounds ? `Final, ${ordinal(s.place)}` : `Out in round ${s.round} (${ordinal(s.place)} of ${s.size})`;
@@ -444,7 +518,7 @@ function renderDecisionFinal(v: StateMsg, d: DecisionView): void {
       el('td', { text: ordinal(s.rank) }),
       el('td', { text: o?.name ?? '?' }),
       el('td', { text: result }),
-      el('td', { text: o ? (o.by === v.me ? 'you' : o.byName) : '' }),
+      ...(comp ? [] : [el('td', { text: o ? (o.by === v.me ? 'you' : o.byName) : '' })]),
     );
   });
   $('dfinal-table').replaceChildren(head, ...body);
@@ -452,6 +526,96 @@ function renderDecisionFinal(v: StateMsg, d: DecisionView): void {
 }
 $('dnext-btn').addEventListener('click', () => send({ type: 'next' }));
 $('drematch-btn').addEventListener('click', () => send({ type: 'rematch' }));
+
+// ---- competitive mode ----------------------------------------------------------------
+
+const UPGRADES: { key: UpgradeKey; name: string; desc: string; max: number }[] = [
+  { key: 'speed', name: 'Speed', desc: 'Faster the whole race', max: 5 },
+  { key: 'determ', name: 'Determination', desc: 'Gets faster as the race goes on', max: 5 },
+  { key: 'boost', name: 'Boost', desc: 'A burst of speed after passing a snail', max: 5 },
+  { key: 'shell', name: 'Shell', desc: 'Blocks or shortens attacks against you', max: 5 },
+  { key: 'salt', name: 'Salt', desc: 'Shots per race that slow a random rival', max: 3 },
+  { key: 'food', name: 'Food', desc: 'Shots per race that distract a random rival', max: 3 },
+];
+
+$('ready-btn').addEventListener('click', () => send({ type: 'ready' }));
+$('shop-close-btn').addEventListener('click', () => send({ type: 'close' }));
+
+function renderShop(v: StateMsg, c: CompView): void {
+  const self = me(v);
+  const upg = self.upg;
+  if (!upg) return;
+  const spare = self.coins;
+  const left = c.allow - (self.bought?.length ?? 0);
+  $('shop-title').textContent = `Seeding round ${c.round} of ${c.rounds}: shop`;
+  $('shop-note').textContent =
+    (self.bailout ? 'You were broke, so the house lent you 50 coins. ' : '') +
+    'Upgrades last the whole game and make your snail faster; nobody steers during the race. The top 40% of each heat win prize money, and there is no betting until elimination.';
+  $('shop-coins').textContent = `${self.coins} coins · ${left} upgrade${left === 1 ? '' : 's'} left this round (one level per item)`;
+  $('shop-items').replaceChildren(
+    ...UPGRADES.map((u) => {
+      const level = upg[u.key];
+      const cost = c.unit * (level + 1);
+      const buy = el('button', { class: 'chip', text: level >= u.max ? 'Maxed' : `Buy ${cost}` });
+      buy.type = 'button';
+      buy.disabled = level >= u.max || cost > spare || self.bought?.includes(u.key) || left <= 0;
+      buy.addEventListener('click', () => send({ type: 'buy', item: u.key }));
+      const pips = '\u25cf'.repeat(level) + '\u25cb'.repeat(u.max - level);
+      return el('div', { class: 'shop-row' }, el('b', { text: u.name }), buy, el('span', { class: 'desc' }, el('span', { class: 'pips', text: pips }), ` ${u.desc}`));
+    }),
+  );
+  const ready = $<HTMLButtonElement>('ready-btn');
+  ready.textContent = self.ready ? 'Ready \u2713' : 'Ready';
+  ready.disabled = self.ready;
+  $('shop-close-btn').hidden = !isHost(v);
+  const waiting = v.players.filter((p) => p.connected && !p.ready).length;
+  $('shop-status').textContent = self.ready
+    ? `You're ready. Waiting on ${waiting} player${waiting === 1 ? '' : 's'}.`
+    : 'Press Ready when you are done shopping.';
+  updateTimer();
+}
+
+function renderCompRacing(v: StateMsg, c: CompView): void {
+  $('racing-title').textContent = `Seeding round ${c.round} of ${c.rounds}, heat ${c.heat} of ${c.heats}`;
+  $('racing-line').replaceChildren(
+    ...(c.lanes ?? []).map((id, lane) => el('span', { class: 'lineup' }, dot(lane), playerName(v, id) + (id === v.me ? ' (you)' : ''))),
+  );
+}
+
+function renderCompResults(v: StateMsg, c: CompView): void {
+  const rows = c.result ?? [];
+  const winner = rows[0];
+  $('cres-title').textContent = winner ? `${winner.name} wins the heat!` : 'Heat over';
+  $('cres-note').textContent =
+    `Seeding round ${c.round} of ${c.rounds}, heat ${c.heat} of ${c.heats}. Points go 8, 7, 6\u2026 by finish; the top ${rows.filter((r) => r.prize > 0).length} also win prize money.`;
+  const head = el('tr', {}, el('th', { text: 'Place' }), el('th', { text: 'Player' }), el('th', { class: 'num', text: 'Pts' }), el('th', { class: 'num', text: 'Prize' }));
+  $('cres-table').replaceChildren(
+    head,
+    ...rows.map((r) => {
+      return el(
+        'tr',
+        { class: r.id === v.me ? 'adv' : '' },
+        el('td', { text: ordinal(r.place) }),
+        el('td', { text: r.name + (r.id === v.me ? ' (you)' : '') }),
+        el('td', { class: 'num', text: `+${r.points}` }),
+        el('td', { class: `num ${r.prize ? 'gain' : ''}`, text: r.prize ? `+${r.prize}` : '\u2014' }),
+      );
+    }),
+  );
+  const standings = [...v.players].sort((a, b) => (b.points ?? 0) - (a.points ?? 0) || b.coins - a.coins);
+  $('cstand-table').replaceChildren(
+    el('tr', {}, el('th', { text: '#' }), el('th', { text: 'Player' }), el('th', { class: 'num', text: 'Pts' }), el('th', { class: 'num', text: 'Coins' })),
+    ...standings.map((p, i) =>
+      el('tr', {}, el('td', { text: String(i + 1) }), el('td', { text: p.name + (p.id === v.me ? ' (you)' : '') }), el('td', { class: 'num', text: String(p.points ?? 0) }), el('td', { class: 'num', text: String(p.coins) })),
+    ),
+  );
+  const host = isHost(v);
+  const next = $<HTMLButtonElement>('cnext-btn');
+  next.hidden = !host;
+  next.textContent = c.heat < c.heats ? 'Next heat' : c.round < c.rounds ? 'Next round' : 'Start elimination';
+  $('cres-wait').textContent = host ? '' : 'Waiting for the host to continue\u2026';
+}
+$('cnext-btn').addEventListener('click', () => send({ type: 'next' }));
 
 // What one coin on `lane` would return if it wins, given everyone else's bets plus this bet.
 function multiplier(v: StateMsg, lane: number, amount: number): number {
@@ -461,24 +625,33 @@ function multiplier(v: StateMsg, lane: number, amount: number): number {
   return (pool + amount) / (lanePool + amount);
 }
 
-const pickButtons: HTMLButtonElement[] = [];
-for (let i = 0; i < SNAIL_COUNT; i++) {
-  const b = el(
-    'button',
-    { class: 'pick', style: `border-left-color:${SNAILS[i]!.color}` },
-    el('b', { text: laneLabel(i) }),
-    el('span', { class: 'info' }),
-    el('span', { class: 'pays' }),
-  );
-  b.type = 'button';
-  b.addEventListener('click', () => {
-    draftPick = i;
-    if (view) renderBetting(view);
-    renderer.setSelected(i);
-  });
-  pickButtons.push(b);
+let pickButtons: HTMLButtonElement[] = [];
+let pickSig: string | null = null;
+
+// one button per snail in the heat: numbered colour names in classic, player names in competitive
+function rebuildPicks(labels: string[] | null): void {
+  const sig = labels ? labels.join('|') : '';
+  if (pickSig === sig) return;
+  pickSig = sig;
+  pickButtons = [];
+  for (let i = 0; i < (labels?.length ?? SNAIL_COUNT); i++) {
+    const b = el(
+      'button',
+      { class: 'pick', style: `border-left-color:${SNAILS[i]!.color}` },
+      el('b', { text: labels ? `#${i + 1} ${labels[i]}` : laneLabel(i) }),
+      el('span', { class: 'info' }),
+      el('span', { class: 'pays' }),
+    );
+    b.type = 'button';
+    b.addEventListener('click', () => {
+      draftPick = i;
+      if (view) renderBetting(view);
+      renderer.setSelected(i);
+    });
+    pickButtons.push(b);
+  }
+  $('snail-picks').replaceChildren(...pickButtons);
 }
-$('snail-picks').replaceChildren(...pickButtons);
 
 const amountInput = $<HTMLInputElement>('amount');
 amountInput.addEventListener('input', () => view && renderBetting(view));
@@ -489,6 +662,12 @@ document.querySelectorAll<HTMLButtonElement>('.chip').forEach((c) =>
     renderBetting(view);
   }),
 );
+
+const laneText = (v: StateMsg, lane: number) => {
+  const names = currentLaneNames(v);
+  return names ? `#${lane + 1} ${names[lane] ?? '?'}` : laneLabel(lane);
+};
+$('skip-btn').addEventListener('click', () => send({ type: 'ready' }));
 
 // mirrors Settings.betLimit in game.go
 function betLimit(v: StateMsg): number {
@@ -505,6 +684,13 @@ function currentAmount(): number {
 
 function renderBetting(v: StateMsg): void {
   const self = me(v);
+  const comp = isComp(v);
+  const racing = comp && !!v.comp?.lanes?.includes(v.me);
+  $('betting-title').textContent = racing ? 'Your snail is up' : 'Place your bets';
+  $('snail-picks').hidden = racing;
+  $('bet-amount-row').hidden = racing;
+  $('bet-btn').hidden = racing;
+  $('skip-btn').hidden = !comp || racing || !!v.myBet;
   const amount = currentAmount();
   const validAmount = amount >= 1 && amount <= betLimit(v);
   const preview = Math.max(1, validAmount ? amount : 1);
@@ -526,10 +712,14 @@ function renderBetting(v: StateMsg): void {
   betBtn.disabled = draftPick === null || !validAmount;
 
   $('close-btn').hidden = !isHost(v);
-  if (v.myBet) {
-    $('bet-status').textContent = `Locked in: ${v.myBet.amount} on ${laneLabel(v.myBet.snail)}. You can change it until betting closes.`;
+  if (racing) {
+    $('bet-status').textContent = 'Your snail races this heat, so you can\'t bet on it. Everyone sitting out is placing bets now; you win prize money if you finish near the front.';
+  } else if (comp && self.ready && !v.myBet) {
+    $('bet-status').textContent = 'You\'re sitting this one out. Waiting on the other bettors.';
+  } else if (v.myBet) {
+    $('bet-status').textContent = `Locked in: ${v.myBet.amount} on ${laneText(v, v.myBet.snail)}. You can change it until betting closes.`;
   } else {
-    $('bet-status').textContent = `You have ${self.coins} coins${v.settings.maxBet > 0 ? ` (max bet ${betLimit(v)})` : ''}. Pick a snail and an amount.`;
+    $('bet-status').textContent = `You have ${self.coins} coins${v.settings.maxBet > 0 ? ` (max bet ${betLimit(v)})` : ''}. Pick a snail and an amount${comp ? ', or skip' : ''}.`;
   }
   updateTimer();
 }
@@ -592,11 +782,13 @@ function renderFinal(v: StateMsg): void {
 
 function updateTimer(): void {
   const t = $('timer');
-  if (view?.phase === 'betting' && view.deadline) {
+  const open = view?.phase === 'betting' || view?.phase === 'shop';
+  if (open && view?.deadline) {
     const left = Math.max(0, Math.ceil((view.deadline - (Date.now() + clockOffset)) / 1000));
-    t.textContent = `Betting closes in ${left}s`;
-  } else if (view?.phase === 'betting') {
-    const waiting = view.players.filter((p) => p.connected && !p.ready).length;
+    t.textContent = `${view.phase === 'shop' ? 'Shop' : 'Betting'} closes in ${left}s`;
+  } else if (open && view) {
+    const racing = view.comp?.stage === 'elim' ? (view.comp.lanes ?? []) : [];
+    const waiting = view.players.filter((p) => p.connected && !p.ready && !racing.includes(p.id)).length;
     t.textContent = `Waiting on ${waiting}`;
   } else {
     t.textContent = '';

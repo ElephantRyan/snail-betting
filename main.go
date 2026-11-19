@@ -58,6 +58,7 @@ type inMsg struct {
 	Amount   int       `json:"amount"`
 	ID       int       `json:"id"`    // removeSnail
 	Force    bool      `json:"force"` // addSnail: add despite a close match
+	Item     string    `json:"item"`  // buy
 }
 
 // bootID changes on every server start; clients reload when it does, so a restart never leaves
@@ -110,7 +111,7 @@ func handleJoin(c *client, m inMsg) {
 		}
 	}
 	if r.phase == "lobby" || r.phase == "snails" { // decision mode lets late arrivals in while snails are being added
-		if len(r.players) >= maxPlayers {
+		if len(r.players) >= r.playerCap() {
 			fail(c, "This room is full.")
 			return
 		}
@@ -134,6 +135,10 @@ func handleAction(c *client, m inMsg) {
 		err = r.start(p)
 	case "bet":
 		err = r.placeBet(p, m.Snail, m.Amount)
+	case "buy":
+		err = r.buy(p, m.Item)
+	case "ready":
+		err = r.ready(p)
 	case "close":
 		err = r.forceClose(p)
 	case "next":
@@ -245,6 +250,10 @@ func sweepRooms(maxIdle time.Duration) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "-arena" {
+		arenaMain(os.Args[2:])
+		return
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "3000"

@@ -3,3 +3,6 @@ web/dist/*
 !web/dist/.gitkeep
 *.exe
 .idea/
+bots/arena.exe
+bots/runs/
+__pycache__/

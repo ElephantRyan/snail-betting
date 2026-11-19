@@ -30,13 +30,14 @@
           <select id="create-mode">
             <option value="classic">Classic: bet on snails</option>
             <option value="decision">Decision: let the snails decide</option>
+            <option value="competitive">Competitive: everyone races their own snail</option>
           </select>
         </label>
         <div id="classic-opts">
           <div class="row3">
-            <label>Rounds <input id="create-rounds" type="number" min="1" max="20" value="5"></label>
-            <label>Coins <input id="create-coins" type="number" min="100" max="100000" step="100" value="1000"></label>
-            <label>Bet timer (s) <input id="create-timer" type="number" min="0" max="180" value="30"></label>
+            <label><span id="rounds-label">Rounds</span> <input id="create-rounds" type="number" min="1" max="20" value="5"></label>
+            <label id="coins-label">Coins <input id="create-coins" type="number" min="100" max="100000" step="100" value="1000"></label>
+            <label><span id="timer-label">Bet timer (s)</span> <input id="create-timer" type="number" min="0" max="180" value="30"></label>
           </div>
           <div class="row3">
             <label>Max bet <input id="create-maxbet" type="number" min="0" max="100000" value="0"></label>
@@ -47,6 +48,7 @@
               </select>
             </label>
           </div>
+          <small id="comp-note" hidden>Everyone gets a snail (up to 16 players) and the same small purse. Seeding rounds earn points in heats of 8 while you spend coins on upgrades; the top 40% of each heat also win prize money. Then the seeds go into an elimination bracket, where upgrades are locked and anyone not racing can bet on the heat.</small>
           <small>Max bet 0 = no limit.<br>Timer 0 = betting stays open until everyone locks in or you close it.</small>
         </div>
         <small id="decision-note" hidden>Everyone adds options (up to 64) and each one becomes a snail. They race in heats of 8, the top 4 of each heat move on, and the last race picks the winner.</small>
@@ -99,10 +101,10 @@
         </div>
 
         <div id="panel-betting" class="card" hidden>
-          <h2>Place your bets</h2>
+          <h2 id="betting-title">Place your bets</h2>
           <p id="bailout-note" class="note" hidden></p>
           <div id="snail-picks" class="picks"></div>
-          <div class="amount-row">
+          <div id="bet-amount-row" class="amount-row">
             <label>Bet <input id="amount" type="number" inputmode="numeric" min="1" step="1"></label>
             <div class="chips">
               <button type="button" class="chip" data-frac="0.1">10%</button>
@@ -113,9 +115,22 @@
           </div>
           <div class="actions">
             <button id="bet-btn" class="btn primary"></button>
+            <button id="skip-btn" class="btn" hidden>Skip betting</button>
             <button id="close-btn" class="btn" hidden>Close betting now</button>
           </div>
           <p id="bet-status" class="note"></p>
+        </div>
+
+        <div id="panel-shop" class="card" hidden>
+          <h2 id="shop-title">Shop</h2>
+          <p id="shop-note" class="note"></p>
+          <p id="shop-coins"></p>
+          <div id="shop-items" class="shop"></div>
+          <div class="actions">
+            <button id="ready-btn" class="btn primary">Ready</button>
+            <button id="shop-close-btn" class="btn" hidden>Start the race now</button>
+          </div>
+          <p id="shop-status" class="note"></p>
         </div>
 
         <div id="panel-racing" class="card" hidden>
@@ -132,10 +147,22 @@
           <p id="results-wait" class="note"></p>
         </div>
 
+        <div id="panel-cresults" class="card" hidden>
+          <h2 id="cres-title"></h2>
+          <p id="cres-note" class="note"></p>
+          <table id="cres-table"></table>
+          <p class="note">Seeding standings</p>
+          <table id="cstand-table"></table>
+          <button id="cnext-btn" class="btn primary"></button>
+          <p id="cres-wait" class="note"></p>
+        </div>
+
         <div id="panel-dheat" class="card" hidden>
           <h2 id="dheat-title"></h2>
           <p id="dheat-note" class="note"></p>
           <table id="dheat-table"></table>
+          <p id="dheat-bets-note" class="note" hidden>Bets on this heat</p>
+          <table id="dheat-bets" hidden></table>
           <button id="dnext-btn" class="btn primary"></button>
           <p id="dheat-wait" class="note"></p>
         </div>
