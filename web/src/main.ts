@@ -202,7 +202,7 @@ function syncMode(): void {
   $('coins-label').hidden = comp;
   $('rounds-label').textContent = comp ? 'Seeding rounds' : 'Rounds';
   $('timer-label').textContent = comp ? 'Shop timer (s)' : 'Bet timer (s)';
-  if (!roundsEdited) roundsInput.value = comp ? '4' : '5';
+  if (!roundsEdited) roundsInput.value = comp ? '6' : '5';
   if (!timerEdited) timerInput.value = comp ? '45' : '30';
 }
 modeSelect.addEventListener('change', syncMode);
