@@ -553,6 +553,9 @@ func (r *Room) quote(p *Player, item string) (int, string) {
 
 // shopLeft is how many more upgrades the player may pay for this round; a consolation pick is extra.
 func (r *Room) shopLeft(p *Player) int {
+	if r.comp == nil { // still in the lobby
+		return 0
+	}
 	return max(0, shopAllowance(r.comp.round)-(len(p.bought)-p.freeBought))
 }
 
