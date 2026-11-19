@@ -119,12 +119,28 @@ function buildSprite(lane: number, frame: 0 | 1): HTMLCanvasElement {
   return c;
 }
 
+// The leaf (food attack) drops in front of its target and is eaten in LEAF_BITES chunks, starting
+// from the snail's side, for as long as the snail is distracted.
+const LEAF = [
+  '...dddddd.....',
+  '.ddggggggdd...',
+  'dggggggggggdd.',
+  'ttvvvvvvvvvvd.',
+  'dggggggggggdd.',
+  '.ddggggggdd...',
+  '...dddddd.....',
+];
+const LEAF_COLORS: Record<string, string> = { d: '#2c7a2c', g: '#4cc14c', v: '#a7e87a', t: '#7a5230' };
+const LEAF_CELL = 2;
+const LEAF_BITES = 7;
+
 export interface RaceEvent {
   t: number; // frame the attack lands
   from: number;
   to: number;
   kind: 'salt' | 'food';
   blocked: boolean;
+  dur: number; // frames the effect lasts, 0 if blocked
 }
 
 export interface RaceAnim {
@@ -359,8 +375,13 @@ export class TrackRenderer {
     const yOf = (lane: number) => TOP + lane * this.laneH + this.laneH / 2;
     for (const e of r.events ?? []) {
       const age = (f - e.t) / r.fps;
-      if (age < 0 || age > 1.6) continue;
-      const icon = e.kind === 'salt' ? '🧂' : '🍔';
+      const life = e.kind === 'food' ? flight + (e.blocked ? 0.6 : Math.max(0.1, e.dur / r.fps)) + 0.3 : 1.6;
+      if (age < 0 || age > life) continue;
+      if (e.kind === 'food') {
+        this.drawFood(g, e, age, flight, lefts, sx);
+        continue;
+      }
+      const icon = '🧂';
       const x1 = sx(lefts[e.to]!) + SPR_W / 2;
       if (age < flight) {
         const t = age / flight;
@@ -368,6 +389,54 @@ export class TrackRenderer {
         g.fillText(icon, x0 + (x1 - x0) * t, yOf(e.from) + (yOf(e.to) - yOf(e.from)) * t - Math.sin(t * Math.PI) * 12);
       } else {
         g.fillText(e.blocked ? '🛡️' : icon, x1, yOf(e.to) - 8 - (age - flight) * 8);
+      }
+    }
+  }
+
+  private drawLeaf(g: Ctx, x: number, y: number, bitesGone: number): void {
+    const cols = LEAF[0]!.length - 2 * bitesGone; // each bite takes two columns off the snail's side
+    LEAF.forEach((row, cy) => {
+      for (let cx = 0; cx < Math.min(cols, row.length); cx++) {
+        const color = LEAF_COLORS[row[cx]!];
+        if (!color) continue;
+        g.fillStyle = color;
+        g.fillRect(x + cx * LEAF_CELL, y + cy * LEAF_CELL, LEAF_CELL, LEAF_CELL);
+      }
+    });
+  }
+
+  /** A leaf thrown at a rival lands at its mouth and is eaten while it is stuck there. */
+  private drawFood(g: Ctx, e: RaceEvent, age: number, flight: number, lefts: number[], sx: (wx: number) => number): void {
+    const r = this.race!;
+    const landed = (r.frames[Math.min(e.t, r.frames.length - 1)]![e.to]! / 1000) * TRACK_PX; // the snail is stuck here
+    const leafH = LEAF.length * LEAF_CELL;
+    const lx = sx(landed + SPR_W - 6);
+    const ly = TOP + e.to * this.laneH + (this.laneH - SPR_H) / 2 + SPR_H - leafH;
+    if (age < flight) {
+      const t = age / flight;
+      const x0 = sx(lefts[e.from]!) + SPR_W / 2 - (LEAF[0]!.length * LEAF_CELL) / 2;
+      const y0 = TOP + e.from * this.laneH + this.laneH / 2 - leafH / 2;
+      this.drawLeaf(g, x0 + (lx - x0) * t + Math.sin(t * 12) * 2, y0 + (ly - y0) * t - Math.sin(t * Math.PI) * 14, 0);
+      return;
+    }
+    const since = age - flight;
+    if (e.blocked) {
+      if (since < 0.6) {
+        this.drawLeaf(g, lx, ly, 0);
+        g.fillText('🛡️', lx + 10, ly - 8);
+      }
+      return;
+    }
+    const eat = Math.max(0.1, e.dur / r.fps);
+    const bites = Math.min(LEAF_BITES, Math.floor((since / eat) * LEAF_BITES));
+    if (bites < LEAF_BITES) this.drawLeaf(g, lx, ly, bites);
+    if (bites > 0) {
+      // crumbs drop from the bite that was just taken
+      const crumb = since - (bites / LEAF_BITES) * eat;
+      if (crumb >= 0 && crumb < 0.25) {
+        g.fillStyle = '#a7e87a';
+        const edge = lx + (LEAF[0]!.length - 2 * bites) * LEAF_CELL;
+        for (let k = 0; k < 3; k++) g.fillRect(edge + k * 3 - 2, ly + 3 + k * 2 + crumb * 50, 2, 2);
       }
     }
   }

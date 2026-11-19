@@ -48,7 +48,7 @@
               </select>
             </label>
           </div>
-          <small id="comp-note" hidden>Everyone gets a snail (up to 16 players) and the same small purse. Seeding rounds earn points in heats of 8 while you spend coins on upgrades; the top 40% of each heat also win prize money. Then the seeds go into an elimination bracket, where upgrades are locked and anyone not racing can bet on the heat.</small>
+          <small id="comp-note" hidden>Everyone gets a snail (up to 16 players) and the same small purse. Seeding rounds earn points in heats of 8 while you spend coins on upgrades; the top 40% of each heat also win prize money. Then the seeds go into an elimination bracket, where upgrades are locked. Anyone not racing a heat can bet on it. There are two winners: the last snail standing and the player with the most coins.</small>
           <small>Max bet 0 = no limit.<br>Timer 0 = betting stays open until everyone locks in or you close it.</small>
         </div>
         <small id="decision-note" hidden>Everyone adds options (up to 64) and each one becomes a snail. They race in heats of 8, the top 4 of each heat move on, and the last race picks the winner.</small>
@@ -151,6 +151,8 @@
           <h2 id="cres-title"></h2>
           <p id="cres-note" class="note"></p>
           <table id="cres-table"></table>
+          <p id="cres-bets-note" class="note" hidden>Bets on this heat</p>
+          <table id="cres-bets" hidden></table>
           <p class="note">Seeding standings</p>
           <table id="cstand-table"></table>
           <button id="cnext-btn" class="btn primary"></button>
@@ -169,6 +171,7 @@
 
         <div id="panel-dfinal" class="card" hidden>
           <h2 id="dfinal-title"></h2>
+          <p id="dfinal-rich" class="note" hidden></p>
           <p class="note">Full standings</p>
           <table id="dfinal-table"></table>
           <button id="drematch-btn" class="btn primary">Rematch</button>

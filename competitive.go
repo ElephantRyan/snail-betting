@@ -109,6 +109,7 @@ type raceEvent struct {
 	To      int    `json:"to"`
 	Kind    string `json:"kind"` // salt | food
 	Blocked bool   `json:"blocked"`
+	Dur     int    `json:"dur"` // frames the effect lasts (0 if the shell blocked it)
 }
 
 type shot struct {
@@ -157,6 +158,7 @@ func simulateRaceWith(lanes int, rnd func() float64, mods []Upgrades) ([][]int, 
 					base = tune.FoodFrames
 				}
 				d := int(math.Round(base * (1 - tune.ShellShort*shell)))
+				ev.Dur = d
 				if s.kind == "salt" {
 					slow[to] = max(slow[to], d)
 				} else {
@@ -352,7 +354,7 @@ func (r *Room) compCloseShop() {
 		return
 	}
 	r.comp.heat = 0
-	r.compStartHeat()
+	r.readyHeat()
 }
 
 func (r *Room) laneLabels(lanes []int) []string {
@@ -429,7 +431,7 @@ func (r *Room) compNext() string {
 	switch {
 	case c.heat+1 < len(c.heats):
 		c.heat++
-		r.compStartHeat()
+		r.readyHeat()
 	case c.round < r.settings.Rounds:
 		r.startShop()
 	default:
@@ -510,13 +512,39 @@ func (r *Room) ready(p *Player) string {
 	return ""
 }
 
-// isRacing reports whether the player's snail is in the elimination heat being set up or run.
-func (r *Room) isRacing(p *Player) bool {
+// heatIDs are the snails (option ids) in the heat being set up or run, seeding or elimination.
+func (r *Room) heatIDs() []int {
 	c := r.comp
-	return c != nil && c.stage == "elim" && r.bracket != nil && slices.Contains(r.bracket.heats[r.bracket.heat], p.optID)
+	switch {
+	case c == nil:
+		return nil
+	case c.stage == "elim":
+		if r.bracket == nil {
+			return nil
+		}
+		return r.bracket.heats[r.bracket.heat]
+	case c.heat < len(c.heats):
+		return c.heats[c.heat]
+	}
+	return nil
 }
 
-// readyHeat starts an elimination heat, after a betting phase if anyone is sitting it out.
+// isRacing reports whether the player's snail is in the heat being set up or run. Everyone else
+// can bet on it.
+func (r *Room) isRacing(p *Player) bool {
+	return slices.Contains(r.heatIDs(), p.optID)
+}
+
+// beginHeat runs the heat that has been set up.
+func (r *Room) beginHeat() {
+	if r.comp.stage == "seed" {
+		r.compStartHeat()
+	} else {
+		r.startHeat()
+	}
+}
+
+// readyHeat starts a heat (seeding or elimination), after a betting phase if anyone is sitting it out.
 func (r *Room) readyHeat() {
 	if r.settings.Mode != modeCompetitive {
 		r.startHeat()
@@ -529,7 +557,7 @@ func (r *Room) readyHeat() {
 		spectators = spectators || (q.connected && !r.isRacing(q))
 	}
 	if !spectators {
-		r.startHeat()
+		r.beginHeat()
 		return
 	}
 	r.round++

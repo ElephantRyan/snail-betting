@@ -274,8 +274,10 @@ func (r *Room) playerCap() int {
 
 // laneCount is how many snails the current betting round has to choose from.
 func (r *Room) laneCount() int {
-	if r.comp != nil && r.comp.stage == "elim" && r.bracket != nil {
-		return len(r.bracket.heats[r.bracket.heat])
+	if r.phase != "shop" {
+		if ids := r.heatIDs(); len(ids) > 0 {
+			return len(ids)
+		}
 	}
 	return snailCount
 }
@@ -557,7 +559,7 @@ func (r *Room) maybeCloseBetting() {
 	for _, q := range r.players {
 		if q.connected {
 			live++
-			if !q.ready && !r.isRacing(q) { // snails that are racing don't bet
+			if !q.ready && !(r.phase == "betting" && r.isRacing(q)) { // snails that are racing don't bet
 				return
 			}
 		}
@@ -574,7 +576,7 @@ func (r *Room) closeRound() {
 		r.compCloseShop()
 	case r.settings.Mode == modeCompetitive:
 		if r.phase == "betting" {
-			r.startHeat()
+			r.beginHeat()
 		}
 	default:
 		r.closeBetting()

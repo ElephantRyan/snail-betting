@@ -32,8 +32,6 @@ const (
 // arenaBlind hides every opponent's upgrade levels from the bots, as the real UI does.
 var arenaBlind bool
 
-var arenaTap func(size int, order []int) // PROBE
-
 var (
 	shopItems = [6]string{"speed", "determ", "boost", "shell", "salt", "food"}
 	betFrac   = [4]float64{0.1, 0.25, 0.5, 1}
@@ -58,6 +56,9 @@ type arenaResult struct {
 	Coins    []int     `json:"coins"`
 	BetTotal []int     `json:"betTotal"`
 	BetNet   []int     `json:"betNet"`
+	// the second way to win: most coins at the end
+	Wealth     []float64 `json:"wealth"`
+	WealthRank []int     `json:"wealthRank"`
 }
 
 func newArenaGame(players, rounds int) *arenaGame {
@@ -119,7 +120,7 @@ func (g *arenaGame) advance() {
 			g.pending = g.pending[:0]
 			forced := false
 			for seat, p := range g.seats {
-				if p.ready || r.isRacing(p) {
+				if p.ready || (r.phase == "betting" && r.isRacing(p)) {
 					continue
 				}
 				if !g.legal(p, mask) { // nothing to choose: just finish
@@ -141,15 +142,12 @@ func (g *arenaGame) advance() {
 			if r.comp.stage == "seed" {
 				r.compFinishHeat()
 			} else {
-				if arenaTap != nil {
-					arenaTap(len(r.race.order), r.race.order)
-				}
 				r.finishHeat()
-				for _, b := range r.comp.bets {
-					seat := slices.IndexFunc(g.seats, func(p *Player) bool { return p.id == b.ID })
-					g.betTotal[seat] += b.Amount
-					g.betNet[seat] += b.Payout - b.Amount
-				}
+			}
+			for _, b := range r.comp.bets {
+				seat := slices.IndexFunc(g.seats, func(p *Player) bool { return p.id == b.ID })
+				g.betTotal[seat] += b.Amount
+				g.betNet[seat] += b.Payout - b.Amount
 			}
 		case "results":
 			if r.comp.stage == "seed" {
@@ -172,6 +170,7 @@ func (g *arenaGame) finish() {
 	res := &arenaResult{
 		Reward: make([]float64, n), Rank: make([]int, n), Levels: make([][6]int, n), Coins: make([]int, n),
 		BetTotal: g.betTotal, BetNet: g.betNet,
+		Wealth: make([]float64, n), WealthRank: make([]int, n),
 	}
 	for _, row := range g.r.bracket.standings {
 		seat := slices.IndexFunc(g.seats, func(p *Player) bool { return p.optID == row.Option })
@@ -180,6 +179,13 @@ func (g *arenaGame) finish() {
 	}
 	for i, p := range g.seats {
 		res.Levels[i], res.Coins[i] = levelsOf(p.upg), p.coins
+		res.WealthRank[i] = 1 // ties share a rank
+		for _, q := range g.seats {
+			if q.coins > p.coins {
+				res.WealthRank[i]++
+			}
+		}
+		res.Wealth[i] = 1 - float64(res.WealthRank[i]-1)/float64(n-1)
 	}
 	g.finished, g.pending = res, nil
 }
@@ -252,13 +258,13 @@ func (g *arenaGame) observe(seat int) []float32 {
 		o[15+i] = b2f(slices.Contains(p.bought, shopItems[i]))
 	}
 	o[33] = float32(p.seed) / n
-	if c.stage == "elim" && r.bracket != nil {
+	if ids := r.heatIDs(); r.phase == "betting" && len(ids) > 0 {
 		pools, _ := r.pools()
 		total := 0
 		for _, v := range pools {
 			total += v
 		}
-		for lane, id := range r.bracket.heats[r.bracket.heat] {
+		for lane, id := range ids {
 			q := r.playerByOpt(id)
 			base := 35 + lane*9
 			o[base], o[base+1], o[base+2] = 1, float32(q.seed)/n, float32(q.points)/maxPts
@@ -271,6 +277,18 @@ func (g *arenaGame) observe(seat int) []float32 {
 		}
 		o[116] = float32(total) / float32(int(n)*compStartCoins)
 	}
+	richer, richest := 0, 0
+	for _, q := range r.players {
+		if q.coins > p.coins {
+			richer++
+		}
+		if q != p {
+			richest = max(richest, q.coins)
+		}
+	}
+	o[117] = float32(richer) / (n - 1)
+	o[118] = min(4, float32(richest)/float32(compStartCoins))
+	o[119] = b2f(c.stage == "elim" && r.bracket != nil && len(r.bracket.heats) == 1 && r.bracket.round == r.bracket.rounds)
 	if arenaBlind {
 		for i := 0; i < 6; i++ {
 			o[21+i], o[27+i] = 0, 0

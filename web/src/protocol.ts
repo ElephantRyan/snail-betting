@@ -156,6 +156,7 @@ export interface RaceEvent {
   to: number;
   kind: 'salt' | 'food';
   blocked: boolean;
+  dur: number; // frames the effect lasts, 0 if blocked
 }
 
 export interface RaceMsg {

@@ -506,9 +506,17 @@ const c = isComp(v) ? v.comp : undefined;
 function renderDecisionFinal(v: StateMsg, d: DecisionView): void {
   const rows = d.standings ?? [];
   const winner = rows[0];
-  $('dfinal-title').textContent = winner ? `${optionName(d, winner.option)} wins!` : 'Final standings';
   const comp = isComp(v);
-  const head = el('tr', {}, el('th', { text: 'Rank' }), el('th', { text: comp ? 'Player' : 'Snail' }), el('th', { text: 'Result' }), ...(comp ? [] : [el('th', { text: 'Added by' })]));
+  $('dfinal-title').textContent = winner ? `${optionName(d, winner.option)} wins${comp ? ' the race' : ''}!` : 'Final standings';
+  const rich = $('dfinal-rich');
+  rich.hidden = !comp;
+  if (comp) {
+    const top = Math.max(...v.players.map((p) => p.coins));
+    const richest = v.players.filter((p) => p.coins === top);
+    const champ = d.options.find((o) => o.id === winner?.option)?.by;
+    rich.textContent = `Richest: ${richest.map((p) => p.name).join(', ')} (${top} coins)` + (richest.some((p) => p.id === champ) ? ' \u2014 a double win!' : '');
+  }
+  const head = el('tr', {}, el('th', { text: 'Rank' }), el('th', { text: comp ? 'Player' : 'Snail' }), el('th', { text: 'Result' }), ...(comp ? [el('th', { class: 'num', text: 'Coins' })] : [el('th', { text: 'Added by' })]));
   const body = rows.map((s) => {
     const o = d.options.find((x) => x.id === s.option);
     const result = s.round === d.rounds ? `Final, ${ordinal(s.place)}` : `Out in round ${s.round} (${ordinal(s.place)} of ${s.size})`;
@@ -518,7 +526,7 @@ function renderDecisionFinal(v: StateMsg, d: DecisionView): void {
       el('td', { text: ordinal(s.rank) }),
       el('td', { text: o?.name ?? '?' }),
       el('td', { text: result }),
-      ...(comp ? [] : [el('td', { text: o ? (o.by === v.me ? 'you' : o.byName) : '' })]),
+      ...(comp ? [el('td', { class: 'num', text: String(v.players.find((p) => p.id === o?.by)?.coins ?? '') })] : [el('td', { text: o ? (o.by === v.me ? 'you' : o.byName) : '' })]),
     );
   });
   $('dfinal-table').replaceChildren(head, ...body);
@@ -550,7 +558,7 @@ function renderShop(v: StateMsg, c: CompView): void {
   $('shop-title').textContent = `Seeding round ${c.round} of ${c.rounds}: shop`;
   $('shop-note').textContent =
     (self.bailout ? 'You were broke, so the house lent you 50 coins. ' : '') +
-    'Upgrades last the whole game and make your snail faster; nobody steers during the race. The top 40% of each heat win prize money, and there is no betting until elimination.';
+    'Upgrades last the whole game and make your snail faster; nobody steers during the race. The top 40% of each heat win prize money, and there is players sitting out a heat can bet on it. Most coins at the end is a second way to win.';
   $('shop-coins').textContent = `${self.coins} coins · ${left} upgrade${left === 1 ? '' : 's'} left this round (one level per item)`;
   $('shop-items').replaceChildren(
     ...UPGRADES.map((u) => {
@@ -586,6 +594,22 @@ function renderCompResults(v: StateMsg, c: CompView): void {
   const rows = c.result ?? [];
   const winner = rows[0];
   $('cres-title').textContent = winner ? `${winner.name} wins the heat!` : 'Heat over';
+  const bets = c.bets ?? [];
+  $('cres-bets-note').hidden = bets.length === 0;
+  $('cres-bets').hidden = bets.length === 0;
+  $('cres-bets').replaceChildren(
+    ...bets.map((b) => {
+      const net = b.payout - b.amount;
+      const snail = rows.find((r) => r.lane === b.lane);
+      return el(
+        'tr',
+        {},
+        el('td', { text: b.name + (b.id === v.me ? ' (you)' : '') }),
+        el('td', { text: `${b.amount} on ${snail?.name ?? '?'}` }),
+        el('td', { class: `num ${net > 0 ? 'gain' : net < 0 ? 'loss' : ''}`, text: net > 0 ? `+${net}` : String(net) }),
+      );
+    }),
+  );
   $('cres-note').textContent =
     `Seeding round ${c.round} of ${c.rounds}, heat ${c.heat} of ${c.heats}. Points go 8, 7, 6\u2026 by finish; the top ${rows.filter((r) => r.prize > 0).length} also win prize money.`;
   const head = el('tr', {}, el('th', { text: 'Place' }), el('th', { text: 'Player' }), el('th', { class: 'num', text: 'Pts' }), el('th', { class: 'num', text: 'Prize' }));
@@ -787,7 +811,7 @@ function updateTimer(): void {
     const left = Math.max(0, Math.ceil((view.deadline - (Date.now() + clockOffset)) / 1000));
     t.textContent = `${view.phase === 'shop' ? 'Shop' : 'Betting'} closes in ${left}s`;
   } else if (open && view) {
-    const racing = view.comp?.stage === 'elim' ? (view.comp.lanes ?? []) : [];
+    const racing = view.phase === 'betting' ? (view.comp?.lanes ?? []) : [];
     const waiting = view.players.filter((p) => p.connected && !p.ready && !racing.includes(p.id)).length;
     t.textContent = `Waiting on ${waiting}`;
   } else {

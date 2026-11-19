@@ -63,6 +63,9 @@ func TestAttacksFire(t *testing.T) {
 		if e.From != 1 || e.To == 1 {
 			t.Errorf("bad attack %+v", e)
 		}
+		if !e.Blocked && e.Dur <= 0 {
+			t.Errorf("a landed attack needs a duration: %+v", e)
+		}
 	}
 }
 
@@ -109,12 +112,35 @@ func TestCompetitiveGame(t *testing.T) {
 		t.Error("round 1 should allow exactly 2 upgrades")
 	}
 	if r.placeBet(ps[1], 0, 10) == "" {
-		t.Error("betting should be closed while seeding")
+		t.Error("the shop has no betting")
 	}
 	spent := 2 * unit
+	sawSeedBet := false
 	for guard := 0; r.comp.stage == "seed" && guard < 100; guard++ {
 		switch r.phase {
 		case "shop":
+			for _, p := range ps {
+				r.ready(p)
+			}
+		case "betting":
+			if !sawSeedBet { // 10 players = 2 seeding heats, so the other heat's racers can bet
+				sawSeedBet = true
+				var racer, watcher *Player
+				for _, p := range ps {
+					if r.isRacing(p) && racer == nil {
+						racer = p
+					}
+					if !r.isRacing(p) && watcher == nil {
+						watcher = p
+					}
+				}
+				if r.placeBet(racer, 0, 10) == "" {
+					t.Error("a seeding racer was allowed to bet on their own heat")
+				}
+				if err := r.placeBet(watcher, 0, 10); err != "" {
+					t.Fatal(err)
+				}
+			}
 			for _, p := range ps {
 				r.ready(p)
 			}
@@ -126,6 +152,9 @@ func TestCompetitiveGame(t *testing.T) {
 	}
 	if r.comp.stage != "elim" || r.bracket == nil {
 		t.Fatalf("never reached elimination (stage %s)", r.comp.stage)
+	}
+	if !sawSeedBet {
+		t.Error("nobody got to bet on a seeding heat")
 	}
 	if r.buy(host, "speed") == "" {
 		t.Error("upgrades should be locked during elimination")

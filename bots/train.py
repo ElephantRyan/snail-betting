@@ -185,6 +185,7 @@ class Stats:
         self.games = np.zeros(n)
         self.reward = np.zeros(n)
         self.champs = np.zeros(n)
+        self.rich = np.zeros(n)
         self.levels = np.zeros((n, 6))
         self.champ_levels = np.zeros(6)
         self.all_levels = np.zeros(6)
@@ -204,6 +205,8 @@ class Stats:
             self.n_seats += 1
             self.bet_total[a] += res["betTotal"][seat]
             self.bet_net[a] += res["betNet"][seat]
+            if res["wealthRank"][seat] == 1:
+                self.rich[a] += 1
             if res["rank"][seat] == 1:
                 self.champs[a] += 1
                 self.champ_levels += lv
@@ -211,15 +214,15 @@ class Stats:
 
     def report(self, players, elapsed, games_done):
         print(f"\n== {games_done} games, {games_done / elapsed:.0f}/s, {players} players ==")
-        print(f"{'agent':<20}{'games':>7}{'mean reward':>13}{'wins':>8}   avg build (speed determ boost shell salt food)")
+        print(f"{'agent':<20}{'games':>7}{'mean reward':>13}{'wins':>8}{'richest':>9}   avg build (speed determ boost shell salt food)")
         for i, name in enumerate(self.names):
             g = max(self.games[i], 1)
             build = " ".join(f"{x:4.1f}" for x in self.levels[i] / g)
-            print(f"{name:<20}{int(self.games[i]):>7}{self.reward[i] / g:>13.3f}{self.champs[i] / g * 100:>7.1f}%   {build}")
+            print(f"{name:<20}{int(self.games[i]):>7}{self.reward[i] / g:>13.3f}{self.champs[i] / g * 100:>7.1f}%{self.rich[i] / g * 100:>8.1f}%   {build}")
         if self.n_champs:
             win = " ".join(f"{x:4.1f}" for x in self.champ_levels / self.n_champs)
             avg = " ".join(f"{x:4.1f}" for x in self.all_levels / self.n_seats)
-            print(f"{'champions build':<20}{'':>28}   {win}\n{'everyone':<20}{'':>28}   {avg}")
+            print(f"{'champions build':<20}{'':>37}   {win}\n{'everyone':<20}{'':>37}   {avg}")
         if self.bet_total.sum() > 0:
             print("betting (net coins per coin staked):")
             for i, name in enumerate(self.names):
@@ -257,6 +260,7 @@ def main():
     ap.add_argument("--entropy", type=float, default=0.01)
     ap.add_argument("--report-every", type=int, default=20000)
     ap.add_argument("--eval", action="store_true", help="no learning: load saved bots and play")
+    ap.add_argument("--wealth-weight", type=float, default=0.5, help="share of the reward that is finishing rich (the rest is race placement)")
     ap.add_argument("--blind", action="store_true", help="bots cannot see opponents' upgrades")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -299,7 +303,8 @@ def main():
                 for seat, a in enumerate(assign[g]):
                     steps = traj.pop((g, seat), None)
                     if steps and pop[a].learns and not args.eval:
-                        pop[a].add(steps, res["reward"][seat])
+                        w = args.wealth_weight  # two ways to win: the race, and the most coins
+                        pop[a].add(steps, (1 - w) * res["reward"][seat] + w * res["wealth"][seat])
                 assign[g] = seat_agents()
                 played += 1
             if not args.eval:
