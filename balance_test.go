@@ -293,7 +293,7 @@ func TestBalanceShellBuff(t *testing.T) {
 	}
 	fmt.Printf("%-22s %-26s %s\n", "shell setting", "typical room (3 shooters)", "heavy room (7 shooters, max)")
 	fmt.Printf("%-22s %-26s %s\n", "(block, shorten)", "pts gain shell 3 / 5", "pts gain shell 3 / 5")
-	for _, c := range [][2]float64{{0.044, 0.076}, {0.06, 0.10}, {0.08, 0.12}, {0.10, 0.15}} {
+	for _, c := range [][2]float64{{0.07, 0.11}, {0.09, 0.13}, {0.10, 0.15}, {0.12, 0.17}} {
 		tune.ShellBlock, tune.ShellShort = c[0], c[1]
 		typ := Upgrades{Salt: 2, Food: 2}
 		heavy := Upgrades{Salt: 3, Food: 3}

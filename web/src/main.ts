@@ -542,8 +542,8 @@ const UPGRADES: { key: UpgradeKey; name: string; desc: string; max: number }[] =
   { key: 'determ', name: 'Determination', desc: 'Gets faster as the race goes on', max: 5 },
   { key: 'boost', name: 'Boost', desc: 'A burst of speed after passing a snail', max: 5 },
   { key: 'shell', name: 'Shell', desc: 'Blocks or shortens attacks against you', max: 5 },
-  { key: 'salt', name: 'Salt', desc: 'Shots per race that slow a random rival', max: 3 },
-  { key: 'food', name: 'Food', desc: 'Shots per race that distract a random rival', max: 3 },
+  { key: 'salt', name: 'Salt', desc: 'Shots per race that slow a rival (the one ahead of you if you are behind)', max: 3 },
+  { key: 'food', name: 'Food', desc: 'Shots per race that distract a rival (the leader if you are behind)', max: 3 },
 ];
 
 $('ready-btn').addEventListener('click', () => send({ type: 'ready' }));

@@ -219,26 +219,41 @@ func TestCompetitiveGame(t *testing.T) {
 }
 
 func TestPickTarget(t *testing.T) {
+	// 4 snails: the top 2 are in the prize places, so ranks 2 and 3 (lanes 3 and 1) fight back
 	pos := []float64{0.5, 0.2, 0.9, 0.4}
+	never := func() float64 { panic("a snail that is behind should not roll for a target") }
 	for _, c := range []struct {
 		kind       string
 		from, want int
 	}{
-		{"food", 1, 2}, // food: the leader
-		{"salt", 1, 3}, // salt: the snail just ahead of the shooter
-		{"food", 2, 0}, // the leader fires at the runner-up
-		{"salt", 2, 0}, // and so does salt, since nobody is ahead
+		{"food", 1, 2}, // last place: food hits the leader
+		{"salt", 1, 3}, // salt hits the snail just ahead
+		{"food", 3, 2},
 		{"salt", 3, 0},
 	} {
-		if got := pickTarget(c.kind, c.from, pos); got != c.want {
+		if got := pickTarget(c.kind, c.from, pos, never); got != c.want {
 			t.Errorf("%s from %d: got %d, want %d", c.kind, c.from, got, c.want)
 		}
 	}
-	pos[2] = 1.05 // finished snails can't be hit
-	if got := pickTarget("food", 1, pos); got != 0 {
-		t.Errorf("food should skip a finished leader, got %d", got)
+	// the leader (and anyone else in the prize places) shoots a random rival
+	for _, c := range []struct {
+		roll float64
+		want int
+	}{{0, 0}, {0.5, 1}, {0.99, 3}} {
+		if got := pickTarget("food", 2, pos, func() float64 { return c.roll }); got != c.want {
+			t.Errorf("leader rolling %.2f: got %d, want %d", c.roll, got, c.want)
+		}
 	}
-	if got := pickTarget("salt", 0, []float64{0.5, 1.2}); got != -1 {
+	pos[0] = 1.05 // finished snails can't be hit
+	for _, roll := range []float64{0, 0.5, 0.99} {
+		if got := pickTarget("salt", 2, pos, func() float64 { return roll }); got == 0 || got == 2 {
+			t.Errorf("random pick landed on %d", got)
+		}
+	}
+	if got := pickTarget("food", 1, pos, never); got != 2 {
+		t.Errorf("food should skip a finished snail, got %d", got)
+	}
+	if got := pickTarget("salt", 0, []float64{0.5, 1.2}, never); got != -1 {
 		t.Errorf("nobody left to hit, got %d", got)
 	}
 }

@@ -111,7 +111,7 @@ type tuning struct {
 // Values found by TestTune (balance_test.go) so that the usual builds come out about even.
 var tune = tuning{
 	SpeedPer: 0.022, DetermPer: 0.033, BoostPer: 0.055,
-	ShellBlock: 0.07, ShellShort: 0.11,
+	ShellBlock: 0.09, ShellShort: 0.13,
 	SaltSlow: 0.36, SaltFrames: 115, FoodFrames: 37,
 }
 
@@ -158,7 +158,7 @@ func simulateRaceWith(lanes int, rnd func() float64, mods []Upgrades) ([][]int, 
 			if s.at != now || lanes < 2 {
 				continue
 			}
-			to := pickTarget(s.kind, s.from, pos)
+			to := pickTarget(s.kind, s.from, pos, rnd)
 			if to < 0 {
 				continue
 			}
@@ -246,21 +246,36 @@ func simulateRaceWith(lanes int, rnd func() float64, mods []Upgrades) ([][]int, 
 	return frames, order, events
 }
 
-// pickTarget decides who an attack hits, so being in front has a price. Food hits whoever leads
-// (apart from the shooter); salt hits the snail just ahead of the shooter, or the closest chaser
-// when the shooter leads. Snails that have finished can't be hit; -1 means nobody can.
-func pickTarget(kind string, from int, pos []float64) int {
-	leader, ahead := -1, -1
+// pickTarget decides who an attack hits. A snail that is currently outside the prize places (the
+// bottom 40% of the heat) fights back: food hits whoever leads, and salt hits the snail just ahead
+// of the shooter. Everyone else shoots a random rival. Snails that have finished can't be hit;
+// -1 means nobody can.
+func pickTarget(kind string, from int, pos []float64, rnd func() float64) int {
+	var cands []int
+	leader, ahead, rank := -1, -1, 0
 	for i, p := range pos {
-		if i == from || p >= 1 {
+		if i == from {
 			continue
 		}
+		if p > pos[from] {
+			rank++
+		}
+		if p >= 1 {
+			continue
+		}
+		cands = append(cands, i)
 		if leader < 0 || p > pos[leader] {
 			leader = i
 		}
 		if p > pos[from] && (ahead < 0 || p < pos[ahead]) {
 			ahead = i
 		}
+	}
+	if len(cands) == 0 {
+		return -1
+	}
+	if rank < prizePlaces(len(pos)) {
+		return cands[min(len(cands)-1, int(rnd()*float64(len(cands))))]
 	}
 	if kind == "salt" && ahead >= 0 {
 		return ahead
