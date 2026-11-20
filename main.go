@@ -278,6 +278,6 @@ func main() {
 		}
 	}()
 
-	log.Printf("snail-betting listening on :%s", port)
+	log.Printf("snails listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }

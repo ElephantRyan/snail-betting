@@ -1,6 +1,6 @@
-# snail-betting
+# snails
 
-Multiplayer snail-race betting game for team events. Go server (WebSockets, in-memory rooms), TypeScript + Vite front end drawn on a canvas. The built front end is embedded in the Go binary.
+Multiplayer snail-racing game for team events. Go server (WebSockets, in-memory rooms), TypeScript + Vite front end drawn on a canvas. The built front end is embedded in the Go binary.
 
 ## Rules
 - The host creates a room (rounds, starting coins, bet timer) and shares the 6-letter code or invite link.

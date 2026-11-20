@@ -1,4 +1,4 @@
-module snail-betting
+module snails
 
 go 1.26.5
 

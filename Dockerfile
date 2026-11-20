@@ -13,11 +13,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
 COPY --from=web /web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /snail-betting .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /snails .
 
 # 3) tiny runtime image
 FROM scratch
-COPY --from=server /snail-betting /snail-betting
+COPY --from=server /snails /snails
 ENV PORT=3000
 EXPOSE 3000
-ENTRYPOINT ["/snail-betting"]
+ENTRYPOINT ["/snails"]

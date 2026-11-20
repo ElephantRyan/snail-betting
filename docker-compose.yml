@@ -1,5 +1,5 @@
 services:
-  snail-betting:
+  snails:
     build: .
     restart: unless-stopped
     ports:

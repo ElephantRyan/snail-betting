@@ -1,6 +1,6 @@
 package main
 
-// Headless arena for bot training: `snail-betting -arena -players 16 -games 256` plays many
+// Headless arena for bot training: `snails -arena -players 16 -games 256` plays many
 // competitive games at once through the real Room rules and talks to bots/train.py over stdin and
 // stdout, one JSON object per line.
 //
@@ -11,9 +11,11 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"slices"
@@ -45,6 +47,10 @@ type arenaGame struct {
 	finished *arenaResult
 	betTotal []int
 	betNet   []int
+
+	// the next decision(s), encoded for the trainer (see encode)
+	obsBytes, maskBytes []byte
+	scratch             []byte
 }
 
 // arenaResult is what the trainer hears when a game ends.
@@ -59,6 +65,44 @@ type arenaResult struct {
 	// the second way to win: most coins at the end
 	Wealth     []float64 `json:"wealth"`
 	WealthRank []int     `json:"wealthRank"`
+}
+
+// encode writes this game's pending decisions as raw bytes: float32 observations (little endian)
+// and 0/1 legal-action masks, in seat order.
+func (g *arenaGame) encode() {
+	if g.scratch == nil {
+		g.scratch = make([]byte, actSize)
+	}
+	g.obsBytes, g.maskBytes = g.obsBytes[:0], g.maskBytes[:0]
+	for _, seat := range g.pending {
+		for _, v := range g.observe(seat) {
+			g.obsBytes = binary.LittleEndian.AppendUint32(g.obsBytes, math.Float32bits(v))
+		}
+		g.legal(g.seats[seat], g.scratch)
+		for _, m := range g.scratch {
+			g.maskBytes = append(g.maskBytes, m-'0')
+		}
+	}
+}
+
+// parallel runs fn(0..n-1) across the given number of workers.
+func parallel(workers, n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	next := make(chan int)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				fn(i)
+			}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
 }
 
 func newArenaGame(players, rounds int) *arenaGame {
@@ -323,25 +367,9 @@ func arenaMain(args []string) {
 
 	workers := runtime.NumCPU()
 	var buf []byte
-	mask := make([]byte, actSize)
 	for {
 		// run every game up to its next decision, in parallel
-		var wg sync.WaitGroup
-		next := make(chan int)
-		for w := 0; w < workers; w++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for i := range next {
-					slots[i].advance()
-				}
-			}()
-		}
-		for i := range slots {
-			next <- i
-		}
-		close(next)
-		wg.Wait()
+		parallel(workers, len(slots), func(i int) { slots[i].advance() })
 
 		// report finished games and restart them (a new game may need no decision, so loop)
 		var done []*arenaResult
@@ -355,60 +383,34 @@ func arenaMain(args []string) {
 			}
 		}
 
-		buf = append(buf[:0], `{"done":`...)
+		// each game with a decision to make describes it (in parallel), then everything goes out as one
+		// frame: a JSON header line, then raw bytes: who (int32 game, int32 seat), observations, masks
+		parallel(workers, len(slots), func(i int) { slots[i].encode() })
+		n := 0
+		for _, g := range slots {
+			n += len(g.pending)
+		}
 		doneJSON, _ := json.Marshal(done)
 		if done == nil {
 			doneJSON = []byte("[]")
 		}
+		buf = append(buf[:0], `{"done":`...)
 		buf = append(buf, doneJSON...)
-		buf = append(buf, `,"who":[`...)
-		first := true
+		buf = append(buf, `,"n":`...)
+		buf = strconv.AppendInt(buf, int64(n), 10)
+		buf = append(buf, "}\n"...)
 		for i, g := range slots {
 			for _, seat := range g.pending {
-				if !first {
-					buf = append(buf, ',')
-				}
-				first = false
-				buf = append(buf, '[')
-				buf = strconv.AppendInt(buf, int64(i), 10)
-				buf = append(buf, ',')
-				buf = strconv.AppendInt(buf, int64(seat), 10)
-				buf = append(buf, ']')
+				buf = binary.LittleEndian.AppendUint32(buf, uint32(i))
+				buf = binary.LittleEndian.AppendUint32(buf, uint32(seat))
 			}
 		}
-		buf = append(buf, `],"obs":[`...)
-		first = true
 		for _, g := range slots {
-			for _, seat := range g.pending {
-				if !first {
-					buf = append(buf, ',')
-				}
-				first = false
-				buf = append(buf, '[')
-				for k, v := range g.observe(seat) {
-					if k > 0 {
-						buf = append(buf, ',')
-					}
-					buf = strconv.AppendFloat(buf, float64(v), 'f', 3, 32)
-				}
-				buf = append(buf, ']')
-			}
+			buf = append(buf, g.obsBytes...)
 		}
-		buf = append(buf, `],"mask":[`...)
-		first = true
 		for _, g := range slots {
-			for _, seat := range g.pending {
-				if !first {
-					buf = append(buf, ',')
-				}
-				first = false
-				g.legal(g.seats[seat], mask)
-				buf = append(buf, '"')
-				buf = append(buf, mask...)
-				buf = append(buf, '"')
-			}
+			buf = append(buf, g.maskBytes...)
 		}
-		buf = append(buf, "]}\n"...)
 		if _, err := out.Write(buf); err != nil || out.Flush() != nil {
 			return
 		}

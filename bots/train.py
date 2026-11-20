@@ -11,6 +11,7 @@ The game itself runs in Go (arena.go) with the real server rules; this file only
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import random
@@ -157,13 +158,19 @@ class Arena:
         )
 
     def read(self):
+        """One frame: a JSON header line, then raw little-endian bytes (who, observations, masks)."""
         line = self.proc.stdout.readline()
         if not line:
             raise SystemExit("arena exited")
         m = json.loads(line)
-        n = len(m["who"])
-        m["obs"] = np.array(m["obs"], np.float32).reshape(n, OBS)
-        m["mask"] = np.array([[c == "1" for c in row] for row in m["mask"]], dtype=bool).reshape(n, ACT)
+        n = m["n"]
+        size = n * (8 + OBS * 4 + ACT)
+        data = self.proc.stdout.read(size) if size else b""
+        if len(data) != size:
+            raise SystemExit("arena exited mid-message")
+        m["who"] = np.frombuffer(data, dtype="<i4", count=2 * n).reshape(n, 2).tolist()
+        m["obs"] = np.frombuffer(data, dtype="<f4", count=n * OBS, offset=8 * n).reshape(n, OBS)
+        m["mask"] = np.frombuffer(data, dtype=np.uint8, count=n * ACT, offset=8 * n + 4 * n * OBS).reshape(n, ACT).astype(bool)
         return m
 
     def send(self, actions):
@@ -248,7 +255,10 @@ def main():
     ap.add_argument("--players", type=int, default=8, choices=range(2, 17))
     ap.add_argument("--agents", type=int, default=12, help="learning bots in the population")
     ap.add_argument("--anchors", type=int, default=4, help="scripted bots (0-4) that never learn")
-    ap.add_argument("--games", type=int, default=256, help="games played side by side")
+    ap.add_argument("--games", type=int, default=1024, help="games played side by side in each pipeline")
+    ap.add_argument("--pipelines", type=int, default=2, help="arenas that take turns, so the game engine runs while Python is busy with the other one")
+    ap.add_argument("--threads", type=int, default=2, help="torch threads inside each learner's update")
+    ap.add_argument("--no-sync-updates", action="store_true", help="update learners one at a time as each fills its batch (slower)")
     ap.add_argument("--rounds", type=int, default=4, help="seeding rounds")
     ap.add_argument("--total", type=int, default=300000, help="games to play before stopping")
     ap.add_argument("--name", default="run")
@@ -268,7 +278,7 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    torch.set_num_threads(4)
+    torch.set_num_threads(args.threads)
 
     out = os.path.join(os.path.dirname(__file__), "runs", args.name)
     os.makedirs(out, exist_ok=True)
@@ -284,9 +294,12 @@ def main():
     def seat_agents():
         return random.sample(range(len(pop)), seats) if len(pop) >= seats else random.choices(range(len(pop)), k=seats)
 
-    arena = Arena(args.exe, args.players, args.games, args.rounds, args.blind)
-    assign = [seat_agents() for _ in range(args.games)]
-    traj = {}  # (game, seat) -> [obs, mask, act, logp, val]
+    arenas = [Arena(args.exe, args.players, args.games, args.rounds, args.blind) for _ in range(args.pipelines)]
+    assign = [[seat_agents() for _ in range(args.games)] for _ in arenas]  # per arena, per game: who plays which seat
+    traj = {}  # (arena, game, seat) -> [obs, mask, act, logp, val]
+    turn = 0
+    learners = [ag for ag in pop if ag.learns]
+    pool = ThreadPoolExecutor(max_workers=max(1, len(learners)))
     played, next_report, t0 = 0, args.report_every, time.time()
 
     def save():
@@ -296,37 +309,43 @@ def main():
 
     try:
         while played < args.total:
-            msg = arena.read()
+            p = turn % len(arenas)  # the arenas take turns: one plays its next step while we think about the other
+            turn += 1
+            msg = arenas[p].read()
             for res in msg["done"]:
                 g = res["game"]
-                stats.game(assign[g], res)
-                for seat, a in enumerate(assign[g]):
-                    steps = traj.pop((g, seat), None)
+                stats.game(assign[p][g], res)
+                for seat, a in enumerate(assign[p][g]):
+                    steps = traj.pop((p, g, seat), None)
                     if steps and pop[a].learns and not args.eval:
                         w = args.wealth_weight  # two ways to win: the race, and the most coins
                         pop[a].add(steps, (1 - w) * res["reward"][seat] + w * res["wealth"][seat])
-                assign[g] = seat_agents()
+                assign[p][g] = seat_agents()
                 played += 1
-            if not args.eval:
-                for ag in pop:
-                    if ag.learns and ag.ready():
-                        ag.update()
+            if not args.eval and learners:
+                if args.no_sync_updates:
+                    for ag in learners:
+                        if ag.ready():
+                            ag.update()
+                elif all(ag.ready() for ag in learners) or any(ag.steps >= 2.5 * args.batch for ag in learners):
+                    # every learner has a batch: they are independent, so they all learn at once on separate cores
+                    list(pool.map(lambda ag: ag.update(), [ag for ag in learners if ag.ready()]))
 
             who, obs, mask = msg["who"], msg["obs"], msg["mask"]
             actions = np.zeros(len(who), np.int64)
             groups = {}
             for row, (g, s) in enumerate(who):
-                groups.setdefault(assign[g][s], []).append(row)
+                groups.setdefault(assign[p][g][s], []).append(row)
             for a, rows in groups.items():
                 act, logp, val = pop[a].act(obs[rows], mask[rows])
                 actions[rows] = act
                 for k, row in enumerate(rows):
                     stats.actions[a, act[k]] += 1
                     if pop[a].learns:
-                        t = traj.setdefault(tuple(who[row]), [[], [], [], [], []])
+                        t = traj.setdefault((p, who[row][0], who[row][1]), [[], [], [], [], []])
                         for lst, x in zip(t, (obs[row], mask[row], act[k], logp[k], val[k])):
                             lst.append(x)
-            arena.send([[g, s, int(actions[i])] for i, (g, s) in enumerate(who)])
+            arenas[p].send([[g, s, int(actions[i])] for i, (g, s) in enumerate(who)])
 
             if played >= next_report:
                 next_report += args.report_every
@@ -339,7 +358,8 @@ def main():
         stats.report(args.players, time.time() - t0, max(played, 1))
         if not args.eval:
             save()
-        arena.close()
+        for a in arenas:
+            a.close()
 
 
 if __name__ == "__main__":
