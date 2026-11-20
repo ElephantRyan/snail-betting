@@ -8,6 +8,10 @@
 </head>
 <body>
   <main id="home" class="screen">
+    <div class="sound-corner">
+      <button class="leave sound-toggle" type="button" title="Sound on or off" aria-label="Sound on or off">&#128266;</button>
+      <button class="leave sound-gear" type="button" title="Sound settings" aria-label="Sound settings">&#9881;</button>
+    </div>
     <h1 class="logo">SNAIL<br>BETTING</h1>
     <p class="tag">Pick a snail. Bet your coins. Pray.</p>
     <div class="cards">
@@ -63,6 +67,8 @@
       <button id="code-btn" class="code" title="Copy invite link"></button>
       <span id="round-label"></span>
       <span id="timer"></span>
+      <button class="leave sound-toggle" type="button" title="Sound on or off" aria-label="Sound on or off">&#128266;</button>
+      <button class="leave sound-gear" type="button" title="Sound settings" aria-label="Sound settings">&#9881;</button>
       <button id="leave-btn" class="leave" type="button">Leave game</button>
     </header>
     <div class="layout">
@@ -193,6 +199,14 @@
     <div id="toast" role="status"></div>
     <div id="offline" hidden>Reconnecting&hellip;</div>
   </main>
+  <dialog id="sound-dialog" class="sound-dialog">
+    <div class="sound-head">
+      <h2>Sound</h2>
+      <button id="sound-close" class="leave" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div id="sound-body"></div>
+  </dialog>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

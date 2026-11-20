@@ -6,3 +6,4 @@ web/dist/*
 bots/arena.exe
 bots/runs/
 __pycache__/
+web/tracks-out/

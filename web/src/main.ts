@@ -16,6 +16,8 @@ import {
   type UpgradeKey,
 } from './protocol';
 import { TrackRenderer } from './renderer';
+import { audio } from './audio';
+import { mountSoundPanel } from './soundpanel';
 
 // ---- tiny DOM helpers ---------------------------------------------------------
 
@@ -82,7 +84,10 @@ function saveSession(s: Session | null): void {
 }
 
 const renderer = new TrackRenderer($<HTMLCanvasElement>('track'));
-renderer.onFinish = () => render();
+renderer.onFinish = () => {
+  audio.finish();
+  render();
+};
 
 // ---- networking -----------------------------------------------------------------
 
@@ -149,6 +154,12 @@ function onMessage(m: ServerMsg): void {
         order: m.order,
         labels: m.labels ?? null,
         events: m.events,
+      });
+      audio.startRace({
+        startLocal: Date.now() + (m.startAt - m.serverNow),
+        fps: m.fps,
+        events: m.events ?? [],
+        track: audio.pick(isFinalHeat(), view?.round ?? 0),
       });
       render();
       break;
@@ -255,6 +266,12 @@ function currentLaneNames(v: StateMsg): string[] | null {
   return v.decision?.lanes ? laneNames(v.decision) : null;
 }
 
+// the last race of a bracket gets its own tune
+function isFinalHeat(): boolean {
+  const d = view?.decision;
+  return !!d && d.heats === 1 && d.round === d.rounds;
+}
+
 function render(): void {
   const v = view;
   if (!v) return;
@@ -267,6 +284,7 @@ function render(): void {
   if (v.round !== lastRound) {
     // new round (or heat): snails back to the line, bet draft restored from the server (page refresh) or cleared
     lastRound = v.round;
+    audio.stopRace();
     hasRace = false;
     const names = currentLaneNames(v);
     if (names) renderer.reset(names.length, names);
@@ -284,6 +302,7 @@ function render(): void {
   }
   $('track').hidden = (!!d && (v.phase === 'lobby' || v.phase === 'snails')) || (!!c && v.phase === 'shop');
 
+  audio.setLobby(v.phase === 'lobby');
   $('code-btn').textContent = v.code;
   $('round-label').textContent = roundLabel(v, d, c);
   const heatFinal = !!d && d.heats === 1;
@@ -544,7 +563,7 @@ $('drematch-btn').addEventListener('click', () => send({ type: 'rematch' }));
 const UPGRADES: { key: UpgradeKey; name: string; desc: string; max: number }[] = [
   { key: 'speed', name: 'Speed', desc: 'Faster the whole race', max: 5 },
   { key: 'determ', name: 'Determination', desc: 'Gets faster as the race goes on', max: 5 },
-  { key: 'boost', name: 'Boost', desc: 'A burst of speed after passing a snail', max: 5 },
+  { key: 'boost', name: 'Boost', desc: 'A small burst of speed when you attack or pass a snail', max: 5 },
   { key: 'shell', name: 'Shell', desc: 'Blocks or shortens attacks against you', max: 5 },
   { key: 'salt', name: 'Salt', desc: 'Shots per race that slow a rival (the one ahead of you if you are behind)', max: 3 },
   { key: 'food', name: 'Food', desc: 'Shots per race that distract a rival (the leader if you are behind)', max: 3 },
@@ -573,7 +592,10 @@ function renderShop(v: StateMsg, c: CompView): void {
       const buy = el('button', { class: 'chip', text: level >= u.max ? 'Maxed' : free ? 'Free' : `Buy ${cost}` });
       buy.type = 'button';
       buy.disabled = level >= u.max || !!self.bought?.includes(u.key) || (!free && (cost > spare || left <= 0));
-      buy.addEventListener('click', () => send({ type: 'buy', item: u.key }));
+      buy.addEventListener('click', () => {
+        audio.sfx('coin');
+        send({ type: 'buy', item: u.key });
+      });
       const pips = '\u25cf'.repeat(level) + '\u25cb'.repeat(u.max - level);
       return el('div', { class: 'shop-row' }, el('b', { text: u.name }), buy, el('span', { class: 'desc' }, el('span', { class: 'pips', text: pips }), ` ${u.desc}`));
     }),
@@ -765,7 +787,9 @@ function renderBetting(v: StateMsg): void {
 }
 
 $('bet-btn').addEventListener('click', () => {
-  if (draftPick !== null) send({ type: 'bet', snail: draftPick, amount: currentAmount() });
+  if (draftPick === null) return;
+  audio.sfx('coin');
+  send({ type: 'bet', snail: draftPick, amount: currentAmount() });
 });
 $('close-btn').addEventListener('click', () => send({ type: 'close' }));
 $('start-btn').addEventListener('click', () => send({ type: 'start' }));
@@ -865,5 +889,41 @@ function toast(msg: string, good = false): void {
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => t.classList.remove('show'), 3500);
 }
+
+// sound: a speaker button mutes everything, the gear next to it opens the settings
+mountSoundPanel($('sound-body'));
+const soundDialog = $<HTMLDialogElement>('sound-dialog');
+document.querySelectorAll<HTMLButtonElement>('.sound-gear').forEach((b) =>
+  b.addEventListener('click', () => {
+    audio.unlock();
+    soundDialog.showModal();
+  }),
+);
+$('sound-close').addEventListener('click', () => soundDialog.close());
+soundDialog.addEventListener('click', (e) => {
+  if (e.target === soundDialog) soundDialog.close(); // a click on the backdrop
+});
+const soundToggles = document.querySelectorAll<HTMLButtonElement>('.sound-toggle');
+const syncSoundBtn = (): void => {
+  const on = audio.settings.music || audio.settings.sfx;
+  soundToggles.forEach((b) => (b.textContent = on ? '\u{1F50A}' : '\u{1F507}'));
+};
+soundToggles.forEach((b) =>
+  b.addEventListener('click', () => {
+    const wokeIt = audio.justWoke(); // a browser that blocked sound starts it on this very tap
+    audio.unlock();
+    const on = audio.settings.music || audio.settings.sfx;
+    if (wokeIt && on) return; // the tap just started the sound, so don't also switch it off
+    audio.set({ music: !on, sfx: !on });
+  }),
+);
+audio.subscribe(syncSoundBtn);
+syncSoundBtn();
+// Browsers only start audio after a click, tap or key press, so the first one anywhere wakes the audio
+// up (touch counts on release, which is why pointerup and touchend are here too).
+for (const ev of ['pointerdown', 'pointerup', 'touchend', 'keydown'] as const) document.addEventListener(ev, () => audio.unlock());
+// the waiting-room tune starts as soon as the page loads (it begins at the first interaction if the browser blocks it)
+// and carries on into the lobby; someone reconnecting to a game in progress doesn't get it
+if (!session) audio.setLobby(true);
 
 connect();

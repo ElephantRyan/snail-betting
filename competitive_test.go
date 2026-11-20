@@ -258,6 +258,36 @@ func TestPickTarget(t *testing.T) {
 	}
 }
 
+func TestSpreadShots(t *testing.T) {
+	for n := 1; n <= 6; n++ {
+		for _, roll := range []float64{0, 0.5, 0.999} {
+			times := spreadShots(n, func() float64 { return roll })
+			stretch := 300 / n
+			for j, at := range times {
+				if at < 45 || at > 345 {
+					t.Errorf("n=%d: shot %d at frame %d is outside the window", n, j, at)
+				}
+				if j > 0 && at-times[j-1] < stretch/2-1 {
+					t.Errorf("n=%d roll %.1f: shots %d and %d are only %d frames apart", n, roll, j-1, j, at-times[j-1])
+				}
+			}
+		}
+	}
+	// and in a real race, one snail's attacks never fire on the same frame
+	mods := make([]Upgrades, 6)
+	mods[2] = Upgrades{Salt: 3, Food: 3}
+	for run := 0; run < 200; run++ {
+		_, _, events := simulateRaceWith(6, rnd01(), mods)
+		seen := map[int]bool{}
+		for _, e := range events {
+			if seen[e.T] {
+				t.Fatalf("two attacks left the same snail on frame %d", e.T)
+			}
+			seen[e.T] = true
+		}
+	}
+}
+
 func TestConsolationAndStipend(t *testing.T) {
 	r := newRoom(Settings{Mode: modeCompetitive, Rounds: 3}, "TEST")
 	var ps []*Player

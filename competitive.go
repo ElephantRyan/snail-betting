@@ -142,11 +142,19 @@ func simulateRaceWith(lanes int, rnd func() float64, mods []Upgrades) ([][]int, 
 
 	var shots []shot
 	for i, u := range mods {
+		kinds := make([]string, 0, u.Salt+u.Food)
 		for k := 0; k < u.Salt; k++ {
-			shots = append(shots, shot{45 + int(rnd()*300), i, "salt"})
+			kinds = append(kinds, "salt")
 		}
 		for k := 0; k < u.Food; k++ {
-			shots = append(shots, shot{45 + int(rnd()*300), i, "food"})
+			kinds = append(kinds, "food")
+		}
+		for j := len(kinds) - 1; j > 0; j-- { // shuffle, so the mix of salt and food varies
+			k := int(rnd() * float64(j+1))
+			kinds[j], kinds[k] = kinds[k], kinds[j]
+		}
+		for j, at := range spreadShots(len(kinds), rnd) {
+			shots = append(shots, shot{at, i, kinds[j]})
 		}
 	}
 	var events []raceEvent
@@ -246,10 +254,23 @@ func simulateRaceWith(lanes int, rnd func() float64, mods []Upgrades) ([][]int, 
 	return frames, order, events
 }
 
+// spreadShots picks when each of a snail's n shots is fired. The window (1.5 s to 11.5 s into the
+// race) is cut into n equal stretches and one shot goes in the middle half of each, so a snail's
+// attacks are always at least half a stretch apart and never land together.
+func spreadShots(n int, rnd func() float64) []int {
+	const from, window = 45, 300
+	out := make([]int, n)
+	stretch := float64(window) / float64(max(1, n))
+	for j := range out {
+		out[j] = from + int((float64(j)+0.25+0.5*rnd())*stretch)
+	}
+	return out
+}
+
 // pickTarget decides who an attack hits. A snail that is currently outside the prize places (the
 // bottom 40% of the heat) fights back: food hits whoever leads, and salt hits the snail just ahead
 // of the shooter. Everyone else shoots a random rival. Snails that have finished can't be hit;
-// -1 means nobody can.
+// -1 means nobody can. Nothing stops a snail picking the same target twice: it stays random.
 func pickTarget(kind string, from int, pos []float64, rnd func() float64) int {
 	var cands []int
 	leader, ahead, rank := -1, -1, 0
